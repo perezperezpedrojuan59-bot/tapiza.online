@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tapiza Virtual</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Tapiza Virtual</h1>
+      <p>Previsualiza telas y colores sobre tus muebles en segundos.</p>
+    </header>
+
+    <main class="app-layout">
+      <aside class="panel controls">
+        <section>
+          <h2>1) Carga una foto</h2>
+          <input id="imageInput" type="file" accept="image/*" />
+          <p class="hint">
+            Sube una foto frontal del mueble para obtener un resultado m&aacute;s
+            realista.
+          </p>
+        </section>
+
+        <section>
+          <h2>2) Marca el &aacute;rea a tapizar</h2>
+          <div class="button-row">
+            <button id="paintModeBtn" class="mode-btn active" type="button">
+              Brocha
+            </button>
+            <button id="eraseModeBtn" class="mode-btn" type="button">
+              Borrador
+            </button>
+          </div>
+
+          <label for="brushSize">
+            Tama&ntilde;o de brocha:
+            <span id="brushSizeValue" class="value-badge">28 px</span>
+          </label>
+          <input id="brushSize" type="range" min="8" max="120" value="28" />
+
+          <div class="button-row">
+            <button id="undoMaskBtn" type="button">Deshacer</button>
+            <button id="clearMaskBtn" type="button">Limpiar m&aacute;scara</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>3) Elige una tela</h2>
+          <div id="fabricGrid" class="fabric-grid" aria-label="Opciones de tela"></div>
+        </section>
+
+        <section>
+          <h2>4) Ajusta el acabado</h2>
+          <label for="opacityRange">
+            Intensidad del tapizado:
+            <span id="opacityValue" class="value-badge">80%</span>
+          </label>
+          <input
+            id="opacityRange"
+            type="range"
+            min="0.2"
+            max="1"
+            value="0.8"
+            step="0.05"
+          />
+
+          <div class="option">
+            <input id="showMask" type="checkbox" checked />
+            <label for="showMask">Mostrar gu&iacute;a de m&aacute;scara</label>
+          </div>
+          <div class="option">
+            <input id="showOriginal" type="checkbox" />
+            <label for="showOriginal">Ver original</label>
+          </div>
+        </section>
+
+        <section>
+          <button id="downloadBtn" class="download-btn" type="button" disabled>
+            Descargar resultado
+          </button>
+        </section>
+      </aside>
+
+      <section class="panel preview">
+        <div class="canvas-wrapper">
+          <canvas id="previewCanvas" width="960" height="640"></canvas>
+          <div id="emptyState" class="empty-state">
+            <p>Carga una imagen para comenzar a tapizar virtualmente.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
