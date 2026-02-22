@@ -754,12 +754,14 @@ function App() {
   const [maskBrushSize, setMaskBrushSize] = useState(22)
   const [maskEditorRevision, setMaskEditorRevision] = useState(0)
   const [isSavingMask, setIsSavingMask] = useState(false)
+  const [maskCoveragePercent, setMaskCoveragePercent] = useState(100)
 
   const upholsteryMaskByFurnitureRef = useRef(new Map())
   const maskEditorCanvasRef = useRef(null)
   const maskEditorMaskCanvasRef = useRef(null)
   const maskEditorOverlayCanvasRef = useRef(null)
   const maskEditorImageRef = useRef(null)
+  const maskEditorFurnitureAlphaRef = useRef(null)
   const maskEditorDrawingRef = useRef(false)
   const maskEditorLastPointRef = useRef(null)
 
@@ -895,6 +897,31 @@ function App() {
 
     maskEditorLastPointRef.current = { x, y }
     drawMaskEditorCanvas()
+    setMaskCoveragePercent(calculateMaskCoveragePercent(maskCanvas))
+  }
+
+  const calculateMaskCoveragePercent = (maskCanvas) => {
+    const furnitureAlphaMap = maskEditorFurnitureAlphaRef.current
+    if (!maskCanvas || !furnitureAlphaMap) return 100
+
+    const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true })
+    if (!maskContext) return 100
+
+    const maskPixels = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data
+
+    let furniturePixels = 0
+    let selectedPixels = 0
+
+    for (let pixelIndex = 0; pixelIndex < furnitureAlphaMap.length; pixelIndex += 1) {
+      if (furnitureAlphaMap[pixelIndex] <= 6) continue
+      furniturePixels += 1
+      if (maskPixels[pixelIndex * 4 + 3] > 6) {
+        selectedPixels += 1
+      }
+    }
+
+    if (furniturePixels <= 0) return 100
+    return Math.round((selectedPixels / furniturePixels) * 100)
   }
 
   const handleMaskPointerDown = (event) => {
@@ -936,7 +963,7 @@ function App() {
       setRenderedPreviewSrc('')
       setRenderError('')
       setRenderStatus(
-        `Zona textil guardada para ${selectedFurniture.name}. Pulsa "Aplicar tela" para ver el resultado.`,
+        `Zona textil guardada para ${selectedFurniture.name} (${maskCoveragePercent}% de cobertura). Pulsa "Aplicar tela" para ver el resultado.`,
       )
       setIsMaskEditorOpen(false)
     } finally {
@@ -1004,12 +1031,28 @@ function App() {
         overlayCanvas.width = width
         overlayCanvas.height = height
 
+        const sourceCanvas = document.createElement('canvas')
+        sourceCanvas.width = width
+        sourceCanvas.height = height
+        const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+        if (!sourceContext) {
+          throw new Error('No se pudo preparar el mapa base del mueble.')
+        }
+        sourceContext.drawImage(cutoutImage, 0, 0, width, height)
+        const sourcePixels = sourceContext.getImageData(0, 0, width, height).data
+        const furnitureAlphaMap = new Uint8ClampedArray(width * height)
+        for (let index = 0; index < width * height; index += 1) {
+          furnitureAlphaMap[index] = sourcePixels[index * 4 + 3]
+        }
+
         maskEditorImageRef.current = cutoutImage
         maskEditorMaskCanvasRef.current = maskCanvas
         maskEditorOverlayCanvasRef.current = overlayCanvas
+        maskEditorFurnitureAlphaRef.current = furnitureAlphaMap
         maskEditorDrawingRef.current = false
         maskEditorLastPointRef.current = null
         drawMaskEditorCanvas()
+        setMaskCoveragePercent(calculateMaskCoveragePercent(maskCanvas))
       } catch {
         if (!cancelled) {
           setMaskEditorError('No se pudo cargar el editor de zona textil.')
@@ -1572,7 +1615,8 @@ function App() {
                           </button>
                         </div>
                         <p className="mask-editor-info">
-                          Azul = zona que recibira tela al aplicar el tejido.
+                          Azul = zona que recibira tela al aplicar el tejido. Cobertura actual:{' '}
+                          {maskCoveragePercent}%.
                         </p>
                       </div>
                     ) : null}
