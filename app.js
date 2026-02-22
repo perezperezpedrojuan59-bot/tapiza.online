@@ -57,24 +57,38 @@ attachEvents();
 ensureSelectedFabricReady();
 
 function attachEvents() {
-  imageInput.addEventListener("change", onFurnitureImagePicked);
-  fabricImageInput.addEventListener("change", onFabricImagePicked);
+  if (imageInput) {
+    imageInput.addEventListener("change", onFurnitureImagePicked);
+  }
+  if (fabricImageInput) {
+    fabricImageInput.addEventListener("change", onFabricImagePicked);
+  }
 
-  viewResultBtn.addEventListener("click", () => {
-    if (!state.hasImage) {
-      return;
-    }
-    state.showOriginal = false;
-    showOriginalInput.checked = false;
-    renderPreview();
-  });
+  if (viewResultBtn) {
+    viewResultBtn.disabled = false;
+    viewResultBtn.addEventListener("click", () => {
+      if (!state.hasImage) {
+        alert("Primero carga una imagen del mueble.");
+        return;
+      }
+      state.showOriginal = false;
+      if (showOriginalInput) {
+        showOriginalInput.checked = false;
+      }
+      renderPreview();
+    });
+  }
 
-  showOriginalInput.addEventListener("change", () => {
-    state.showOriginal = showOriginalInput.checked;
-    renderPreview();
-  });
+  if (showOriginalInput) {
+    showOriginalInput.addEventListener("change", () => {
+      state.showOriginal = showOriginalInput.checked;
+      renderPreview();
+    });
+  }
 
-  downloadBtn.addEventListener("click", downloadResult);
+  if (downloadBtn) {
+    downloadBtn.addEventListener("click", downloadResult);
+  }
 }
 
 function onFurnitureImagePicked(event) {
@@ -146,10 +160,11 @@ function loadImageIntoEditor(source, options = {}) {
     state.baseImageData = baseCtx.getImageData(0, 0, fitted.width, fitted.height);
     state.hasImage = true;
     state.showOriginal = true;
-    showOriginalInput.checked = true;
+    if (showOriginalInput) {
+      showOriginalInput.checked = true;
+    }
     emptyState.classList.add("hidden");
     downloadBtn.disabled = false;
-    viewResultBtn.disabled = false;
     runAutoDetection();
     if (revokeObjectUrl) {
       URL.revokeObjectURL(source);
