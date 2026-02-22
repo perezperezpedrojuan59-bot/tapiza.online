@@ -1,19 +1,15 @@
 "use strict";
 
 const MAX_IMAGE_SIDE = 1280;
-const MAX_UNDO_STEPS = 20;
 
 const previewCanvas = document.getElementById("previewCanvas");
 const previewCtx = previewCanvas.getContext("2d", { willReadFrequently: true });
 const imageInput = document.getElementById("imageInput");
-const brushSizeInput = document.getElementById("brushSize");
-const brushSizeValue = document.getElementById("brushSizeValue");
+const detectionRange = document.getElementById("detectionRange");
+const detectionValue = document.getElementById("detectionValue");
+const detectBtn = document.getElementById("detectBtn");
 const opacityRange = document.getElementById("opacityRange");
 const opacityValue = document.getElementById("opacityValue");
-const paintModeBtn = document.getElementById("paintModeBtn");
-const eraseModeBtn = document.getElementById("eraseModeBtn");
-const undoMaskBtn = document.getElementById("undoMaskBtn");
-const clearMaskBtn = document.getElementById("clearMaskBtn");
 const showMaskInput = document.getElementById("showMask");
 const showOriginalInput = document.getElementById("showOriginal");
 const downloadBtn = document.getElementById("downloadBtn");
@@ -25,16 +21,14 @@ const state = {
   hasImage: false,
   width: previewCanvas.width,
   height: previewCanvas.height,
-  brushSize: Number(brushSizeInput.value),
   opacity: Number(opacityRange.value),
-  drawMode: "paint",
-  drawing: false,
-  lastPoint: null,
+  detectionSensitivity: Number(detectionRange.value),
   showMaskGuide: showMaskInput.checked,
   showOriginal: showOriginalInput.checked,
-  undoStack: [],
   selectedFabricId: null,
   selectedSampleId: null,
+  isDetecting: false,
+  detectionJob: 0,
   hexCache: new Map(),
   baseImageData: null,
   patternTiles: createPatternTiles(),
@@ -74,21 +68,24 @@ attachEvents();
 
 function attachEvents() {
   imageInput.addEventListener("change", onImagePicked);
-  brushSizeInput.addEventListener("input", () => {
-    state.brushSize = Number(brushSizeInput.value);
+
+  detectionRange.addEventListener("input", () => {
+    state.detectionSensitivity = Number(detectionRange.value);
     syncReadouts();
   });
+  detectionRange.addEventListener("change", () => {
+    if (state.hasImage) {
+      runAutoDetection();
+    }
+  });
+
+  detectBtn.addEventListener("click", runAutoDetection);
+
   opacityRange.addEventListener("input", () => {
     state.opacity = Number(opacityRange.value);
     syncReadouts();
     renderPreview();
   });
-
-  paintModeBtn.addEventListener("click", () => setDrawMode("paint"));
-  eraseModeBtn.addEventListener("click", () => setDrawMode("erase"));
-
-  undoMaskBtn.addEventListener("click", undoMask);
-  clearMaskBtn.addEventListener("click", clearMask);
 
   showMaskInput.addEventListener("change", () => {
     state.showMaskGuide = showMaskInput.checked;
@@ -98,13 +95,8 @@ function attachEvents() {
     state.showOriginal = showOriginalInput.checked;
     renderPreview();
   });
-  downloadBtn.addEventListener("click", downloadResult);
 
-  previewCanvas.addEventListener("pointerdown", onPointerDown);
-  previewCanvas.addEventListener("pointermove", onPointerMove);
-  previewCanvas.addEventListener("pointerup", onPointerUp);
-  previewCanvas.addEventListener("pointercancel", onPointerUp);
-  previewCanvas.addEventListener("pointerleave", onPointerUp);
+  downloadBtn.addEventListener("click", downloadResult);
 }
 
 function onImagePicked(event) {
@@ -122,33 +114,34 @@ function onImagePicked(event) {
 
 function loadImageIntoEditor(source, options = {}) {
   const revokeObjectUrl = Boolean(options.revokeObjectUrl);
-  const errorMessage =
-    options.errorMessage || "No se pudo cargar la imagen seleccionada.";
+  const errorMessage = options.errorMessage || "No se pudo cargar la imagen.";
   const img = new Image();
+
   img.onload = () => {
     const fitted = fitInBounds(img.naturalWidth, img.naturalHeight, MAX_IMAGE_SIDE);
     setupCanvases(fitted.width, fitted.height);
     baseCtx.clearRect(0, 0, fitted.width, fitted.height);
     baseCtx.drawImage(img, 0, 0, fitted.width, fitted.height);
     state.baseImageData = baseCtx.getImageData(0, 0, fitted.width, fitted.height);
-    clearMaskPixels();
     state.hasImage = true;
     state.showOriginal = false;
     showOriginalInput.checked = false;
     emptyState.classList.add("hidden");
     downloadBtn.disabled = false;
-    state.undoStack = [];
-    renderPreview();
+    detectBtn.disabled = false;
+    runAutoDetection();
     if (revokeObjectUrl) {
       URL.revokeObjectURL(source);
     }
   };
+
   img.onerror = () => {
     if (revokeObjectUrl) {
       URL.revokeObjectURL(source);
     }
     alert(errorMessage);
   };
+
   img.src = source;
 }
 
@@ -164,108 +157,566 @@ function setupCanvases(width, height) {
   state.maskCanvas.height = height;
 }
 
-function setDrawMode(mode) {
-  state.drawMode = mode;
-  paintModeBtn.classList.toggle("active", mode === "paint");
-  eraseModeBtn.classList.toggle("active", mode === "erase");
-}
-
-function onPointerDown(event) {
-  if (!state.hasImage) {
+function runAutoDetection() {
+  if (!state.hasImage || !state.baseImageData || state.isDetecting) {
     return;
   }
-  if (event.pointerType === "mouse" && event.button !== 0) {
-    return;
+
+  state.isDetecting = true;
+  state.detectionJob += 1;
+  const jobId = state.detectionJob;
+
+  detectBtn.disabled = true;
+  detectBtn.textContent = "Detectando...";
+
+  window.setTimeout(() => {
+    if (jobId !== state.detectionJob || !state.baseImageData) {
+      return;
+    }
+
+    const autoMask = detectUpholsteryMask(
+      state.baseImageData,
+      state.width,
+      state.height,
+      state.detectionSensitivity
+    );
+
+    writeMaskToCanvas(autoMask, state.width, state.height);
+    renderPreview();
+
+    state.isDetecting = false;
+    detectBtn.disabled = false;
+    detectBtn.textContent = "Recalcular deteccion";
+  }, 0);
+}
+
+function detectUpholsteryMask(imageData, width, height, sensitivity) {
+  const data = imageData.data;
+  const objectMask = buildObjectMask(data, width, height, sensitivity);
+  return buildUpholsteryMask(data, width, height, objectMask, sensitivity);
+}
+
+function buildObjectMask(data, width, height, sensitivity) {
+  const total = width * height;
+  const bg = estimateBackgroundColor(data, width, height);
+  const threshold = estimateBackgroundThreshold(data, width, height, bg, sensitivity);
+  const rawMask = new Uint8Array(total);
+
+  let pixel = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idx = pixel * 4;
+      const dist = colorDistance(
+        data[idx],
+        data[idx + 1],
+        data[idx + 2],
+        bg.r,
+        bg.g,
+        bg.b
+      );
+      rawMask[pixel] = dist > threshold ? 1 : 0;
+      pixel += 1;
+    }
   }
-  event.preventDefault();
-  state.drawing = true;
-  previewCanvas.setPointerCapture(event.pointerId);
-  pushUndoSnapshot();
-  const point = eventToCanvasPoint(event);
-  state.lastPoint = point;
-  paintStroke(point, point);
-  renderPreview();
-}
 
-function onPointerMove(event) {
-  if (!state.drawing || !state.hasImage) {
-    return;
+  let filtered = dilateMask(rawMask, width, height);
+  filtered = erodeMask(filtered, width, height);
+  filtered = keepLargestComponent(filtered, width, height);
+
+  if (countMaskPixels(filtered) < total * 0.02) {
+    return rawMask;
   }
-  const point = eventToCanvasPoint(event);
-  paintStroke(state.lastPoint, point);
-  state.lastPoint = point;
-  renderPreview();
+  return filtered;
 }
 
-function onPointerUp() {
-  state.drawing = false;
-  state.lastPoint = null;
-}
+function estimateBackgroundColor(data, width, height) {
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 180));
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let count = 0;
 
-function eventToCanvasPoint(event) {
-  const rect = previewCanvas.getBoundingClientRect();
-  const scaleX = state.width / rect.width;
-  const scaleY = state.height / rect.height;
-  const x = (event.clientX - rect.left) * scaleX;
-  const y = (event.clientY - rect.top) * scaleY;
+  for (let x = 0; x < width; x += step) {
+    let idxTop = x * 4;
+    sumR += data[idxTop];
+    sumG += data[idxTop + 1];
+    sumB += data[idxTop + 2];
+    count += 1;
+
+    let idxBottom = ((height - 1) * width + x) * 4;
+    sumR += data[idxBottom];
+    sumG += data[idxBottom + 1];
+    sumB += data[idxBottom + 2];
+    count += 1;
+  }
+
+  for (let y = 0; y < height; y += step) {
+    let idxLeft = (y * width) * 4;
+    sumR += data[idxLeft];
+    sumG += data[idxLeft + 1];
+    sumB += data[idxLeft + 2];
+    count += 1;
+
+    let idxRight = (y * width + (width - 1)) * 4;
+    sumR += data[idxRight];
+    sumG += data[idxRight + 1];
+    sumB += data[idxRight + 2];
+    count += 1;
+  }
+
   return {
-    x: clamp(x, 0, state.width - 1),
-    y: clamp(y, 0, state.height - 1),
+    r: Math.round(sumR / count),
+    g: Math.round(sumG / count),
+    b: Math.round(sumB / count),
   };
 }
 
-function paintStroke(from, to) {
-  maskCtx.save();
-  maskCtx.lineWidth = state.brushSize;
-  maskCtx.lineCap = "round";
-  maskCtx.lineJoin = "round";
+function estimateBackgroundThreshold(data, width, height, bg, sensitivity) {
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 160));
+  let count = 0;
+  let sum = 0;
+  let sumSq = 0;
 
-  if (state.drawMode === "paint") {
-    maskCtx.globalCompositeOperation = "source-over";
-    maskCtx.strokeStyle = "rgba(255,255,255,1)";
-  } else {
-    maskCtx.globalCompositeOperation = "destination-out";
-    maskCtx.strokeStyle = "rgba(0,0,0,1)";
+  function pushDistance(pixelIndex) {
+    const idx = pixelIndex * 4;
+    const d = colorDistance(
+      data[idx],
+      data[idx + 1],
+      data[idx + 2],
+      bg.r,
+      bg.g,
+      bg.b
+    );
+    sum += d;
+    sumSq += d * d;
+    count += 1;
   }
 
-  maskCtx.beginPath();
-  maskCtx.moveTo(from.x, from.y);
-  maskCtx.lineTo(to.x, to.y);
-  maskCtx.stroke();
-  maskCtx.restore();
+  for (let x = 0; x < width; x += step) {
+    pushDistance(x);
+    pushDistance((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y += step) {
+    pushDistance(y * width);
+    pushDistance(y * width + (width - 1));
+  }
+
+  const mean = count > 0 ? sum / count : 0;
+  const variance = count > 0 ? Math.max(0, sumSq / count - mean * mean) : 0;
+  const std = Math.sqrt(variance);
+  return clamp((mean + std * 3 + 10) * sensitivity, 12, 95);
 }
 
-function pushUndoSnapshot() {
-  if (!state.hasImage) {
-    return;
+function buildUpholsteryMask(data, width, height, objectMask, sensitivity) {
+  const total = width * height;
+  const objectArea = countMaskPixels(objectMask);
+  if (objectArea === 0) {
+    return objectMask;
   }
-  const snapshot = maskCtx.getImageData(0, 0, state.width, state.height);
-  state.undoStack.push(snapshot);
-  if (state.undoStack.length > MAX_UNDO_STEPS) {
-    state.undoStack.shift();
+
+  const seed = estimateSeedColor(data, width, height, objectMask);
+
+  const centerX1 = Math.floor(width * 0.2);
+  const centerX2 = Math.floor(width * 0.8);
+  const centerY1 = Math.floor(height * 0.18);
+  const centerY2 = Math.floor(height * 0.82);
+
+  let sampleCount = 0;
+  let sumDistSq = 0;
+  for (let y = centerY1; y < centerY2; y += 2) {
+    for (let x = centerX1; x < centerX2; x += 2) {
+      const p = y * width + x;
+      if (!objectMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const l = luminance(data[idx], data[idx + 1], data[idx + 2]);
+      if (l < 28) {
+        continue;
+      }
+      const d = colorDistance(
+        data[idx],
+        data[idx + 1],
+        data[idx + 2],
+        seed.r,
+        seed.g,
+        seed.b
+      );
+      sumDistSq += d * d;
+      sampleCount += 1;
+    }
   }
+
+  if (sampleCount < 60) {
+    for (let p = 0; p < total; p += 1) {
+      if (!objectMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const l = luminance(data[idx], data[idx + 1], data[idx + 2]);
+      if (l < 28) {
+        continue;
+      }
+      const d = colorDistance(
+        data[idx],
+        data[idx + 1],
+        data[idx + 2],
+        seed.r,
+        seed.g,
+        seed.b
+      );
+      sumDistSq += d * d;
+      sampleCount += 1;
+    }
+  }
+
+  const std = sampleCount > 0 ? Math.sqrt(sumDistSq / sampleCount) : 18;
+  const colorThreshold = clamp((std * 2.4 + 20) * sensitivity, 18, 105);
+  const seedThreshold = colorThreshold * 0.68;
+
+  const candidateMask = new Uint8Array(total);
+  for (let p = 0; p < total; p += 1) {
+    if (!objectMask[p]) {
+      continue;
+    }
+    const idx = p * 4;
+    const r = data[idx];
+    const g = data[idx + 1];
+    const b = data[idx + 2];
+    const l = luminance(r, g, b);
+    const d = colorDistance(r, g, b, seed.r, seed.g, seed.b);
+    if (l > 28 && d <= colorThreshold) {
+      candidateMask[p] = 1;
+    }
+  }
+
+  const grownMask = growMaskFromCenter(
+    candidateMask,
+    data,
+    width,
+    height,
+    seed,
+    seedThreshold
+  );
+
+  let outputMask = countMaskPixels(grownMask) >= objectArea * 0.06 ? grownMask : candidateMask;
+  outputMask = dilateMask(outputMask, width, height);
+  outputMask = erodeMask(outputMask, width, height);
+
+  for (let p = 0; p < total; p += 1) {
+    if (!objectMask[p]) {
+      outputMask[p] = 0;
+    }
+  }
+
+  let outputArea = countMaskPixels(outputMask);
+  if (outputArea > objectArea * 0.9) {
+    for (let p = 0; p < total; p += 1) {
+      if (!outputMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      if (luminance(data[idx], data[idx + 1], data[idx + 2]) < 42) {
+        outputMask[p] = 0;
+      }
+    }
+    outputArea = countMaskPixels(outputMask);
+  }
+
+  if (outputArea < objectArea * 0.04) {
+    const fallback = new Uint8Array(total);
+    for (let p = 0; p < total; p += 1) {
+      if (!objectMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const l = luminance(r, g, b);
+      const d = colorDistance(r, g, b, seed.r, seed.g, seed.b);
+      if (l > 30 && d <= colorThreshold * 1.2) {
+        fallback[p] = 1;
+      }
+    }
+    return fallback;
+  }
+
+  return outputMask;
 }
 
-function undoMask() {
-  if (!state.hasImage || state.undoStack.length === 0) {
-    return;
+function estimateSeedColor(data, width, height, objectMask) {
+  const x1 = Math.floor(width * 0.3);
+  const x2 = Math.floor(width * 0.7);
+  const y1 = Math.floor(height * 0.2);
+  const y2 = Math.floor(height * 0.75);
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let count = 0;
+
+  for (let y = y1; y < y2; y += 1) {
+    for (let x = x1; x < x2; x += 1) {
+      const p = y * width + x;
+      if (!objectMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const l = luminance(r, g, b);
+      if (l < 28 || l > 245) {
+        continue;
+      }
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      count += 1;
+    }
   }
-  const snapshot = state.undoStack.pop();
-  maskCtx.putImageData(snapshot, 0, 0);
-  renderPreview();
+
+  if (count < 100) {
+    const total = width * height;
+    for (let p = 0; p < total; p += 1) {
+      if (!objectMask[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      const l = luminance(r, g, b);
+      if (l < 28 || l > 245) {
+        continue;
+      }
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      count += 1;
+    }
+  }
+
+  if (count === 0) {
+    return { r: 160, g: 160, b: 160 };
+  }
+
+  return {
+    r: Math.round(sumR / count),
+    g: Math.round(sumG / count),
+    b: Math.round(sumB / count),
+  };
 }
 
-function clearMask() {
-  if (!state.hasImage) {
-    return;
+function growMaskFromCenter(candidateMask, data, width, height, seed, seedThreshold) {
+  const total = width * height;
+  const visited = new Uint8Array(total);
+  const output = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+
+  const centerX1 = Math.floor(width * 0.3);
+  const centerX2 = Math.floor(width * 0.7);
+  const centerY1 = Math.floor(height * 0.2);
+  const centerY2 = Math.floor(height * 0.78);
+
+  for (let y = centerY1; y < centerY2; y += 1) {
+    for (let x = centerX1; x < centerX2; x += 1) {
+      const p = y * width + x;
+      if (!candidateMask[p] || visited[p]) {
+        continue;
+      }
+      const idx = p * 4;
+      const d = colorDistance(
+        data[idx],
+        data[idx + 1],
+        data[idx + 2],
+        seed.r,
+        seed.g,
+        seed.b
+      );
+      if (d > seedThreshold) {
+        continue;
+      }
+      visited[p] = 1;
+      output[p] = 1;
+      queue[tail] = p;
+      tail += 1;
+    }
   }
-  pushUndoSnapshot();
-  clearMaskPixels();
-  renderPreview();
+
+  if (tail === 0) {
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+    let bestPixel = -1;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let p = 0; p < total; p += 1) {
+      if (!candidateMask[p]) {
+        continue;
+      }
+      const x = p % width;
+      const y = Math.floor(p / width);
+      const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        bestPixel = p;
+      }
+    }
+    if (bestPixel >= 0) {
+      visited[bestPixel] = 1;
+      output[bestPixel] = 1;
+      queue[tail] = bestPixel;
+      tail += 1;
+    }
+  }
+
+  while (head < tail) {
+    const p = queue[head];
+    head += 1;
+    const x = p % width;
+    const y = Math.floor(p / width);
+
+    if (x > 0) {
+      const n = p - 1;
+      if (candidateMask[n] && !visited[n]) {
+        visited[n] = 1;
+        output[n] = 1;
+        queue[tail] = n;
+        tail += 1;
+      }
+    }
+    if (x < width - 1) {
+      const n = p + 1;
+      if (candidateMask[n] && !visited[n]) {
+        visited[n] = 1;
+        output[n] = 1;
+        queue[tail] = n;
+        tail += 1;
+      }
+    }
+    if (y > 0) {
+      const n = p - width;
+      if (candidateMask[n] && !visited[n]) {
+        visited[n] = 1;
+        output[n] = 1;
+        queue[tail] = n;
+        tail += 1;
+      }
+    }
+    if (y < height - 1) {
+      const n = p + width;
+      if (candidateMask[n] && !visited[n]) {
+        visited[n] = 1;
+        output[n] = 1;
+        queue[tail] = n;
+        tail += 1;
+      }
+    }
+  }
+
+  return output;
 }
 
-function clearMaskPixels() {
-  maskCtx.clearRect(0, 0, state.width, state.height);
+function keepLargestComponent(mask, width, height) {
+  const total = width * height;
+  const labels = new Int32Array(total);
+  const queue = new Int32Array(total);
+  let componentId = 0;
+  let bestId = 0;
+  let bestSize = 0;
+
+  for (let p = 0; p < total; p += 1) {
+    if (!mask[p] || labels[p] !== 0) {
+      continue;
+    }
+
+    componentId += 1;
+    let head = 0;
+    let tail = 0;
+    let size = 0;
+    labels[p] = componentId;
+    queue[tail] = p;
+    tail += 1;
+
+    while (head < tail) {
+      const current = queue[head];
+      head += 1;
+      size += 1;
+      const x = current % width;
+      const y = Math.floor(current / width);
+
+      if (x > 0) {
+        const n = current - 1;
+        if (mask[n] && labels[n] === 0) {
+          labels[n] = componentId;
+          queue[tail] = n;
+          tail += 1;
+        }
+      }
+      if (x < width - 1) {
+        const n = current + 1;
+        if (mask[n] && labels[n] === 0) {
+          labels[n] = componentId;
+          queue[tail] = n;
+          tail += 1;
+        }
+      }
+      if (y > 0) {
+        const n = current - width;
+        if (mask[n] && labels[n] === 0) {
+          labels[n] = componentId;
+          queue[tail] = n;
+          tail += 1;
+        }
+      }
+      if (y < height - 1) {
+        const n = current + width;
+        if (mask[n] && labels[n] === 0) {
+          labels[n] = componentId;
+          queue[tail] = n;
+          tail += 1;
+        }
+      }
+    }
+
+    if (size > bestSize) {
+      bestSize = size;
+      bestId = componentId;
+    }
+  }
+
+  if (bestId === 0) {
+    return mask;
+  }
+
+  const output = new Uint8Array(total);
+  for (let p = 0; p < total; p += 1) {
+    output[p] = labels[p] === bestId ? 1 : 0;
+  }
+  return output;
+}
+
+function countMaskPixels(mask) {
+  let count = 0;
+  for (let i = 0; i < mask.length; i += 1) {
+    count += mask[i] ? 1 : 0;
+  }
+  return count;
+}
+
+function writeMaskToCanvas(mask, width, height) {
+  const imageData = maskCtx.createImageData(width, height);
+  const data = imageData.data;
+  for (let p = 0; p < mask.length; p += 1) {
+    const idx = p * 4;
+    const alpha = mask[p] ? 255 : 0;
+    data[idx] = 255;
+    data[idx + 1] = 255;
+    data[idx + 2] = 255;
+    data[idx + 3] = alpha;
+  }
+  maskCtx.putImageData(imageData, 0, 0);
 }
 
 function renderPreview() {
@@ -337,9 +788,8 @@ function drawCompositeToContext(targetCtx, options) {
         fabricB = colorRgb.b;
       }
 
-      // Preserve volume/light from the source image while adding fabric color.
-      const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-      const shade = 0.45 + luminance * 0.85;
+      const light = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      const shade = 0.45 + light * 0.85;
       const shadedR = clamp(Math.round(fabricR * shade), 0, 255);
       const shadedG = clamp(Math.round(fabricG * shade), 0, 255);
       const shadedB = clamp(Math.round(fabricB * shade), 0, 255);
@@ -390,45 +840,8 @@ function downloadResult() {
 }
 
 function syncReadouts() {
-  brushSizeValue.textContent = `${state.brushSize} px`;
   opacityValue.textContent = `${Math.round(state.opacity * 100)}%`;
-}
-
-function renderFabricOptions() {
-  fabricGrid.innerHTML = "";
-
-  for (const fabric of fabrics) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "fabric-option";
-    item.classList.toggle("active", fabric.id === state.selectedFabricId);
-    item.dataset.fabricId = fabric.id;
-
-    const swatch = document.createElement("span");
-    swatch.className = "fabric-swatch";
-
-    if (fabric.kind === "color") {
-      swatch.style.background = fabric.value;
-    } else {
-      const tile = state.patternTiles[fabric.tileId];
-      swatch.style.backgroundImage = `url("${tile.dataUrl}")`;
-      swatch.style.backgroundSize = "64px 64px";
-    }
-
-    const label = document.createElement("span");
-    label.className = "fabric-label";
-    label.textContent = fabric.label;
-
-    item.append(swatch, label);
-    item.addEventListener("click", () => {
-      state.selectedFabricId = fabric.id;
-      for (const node of fabricGrid.children) {
-        node.classList.toggle("active", node.dataset.fabricId === fabric.id);
-      }
-      renderPreview();
-    });
-    fabricGrid.appendChild(item);
-  }
+  detectionValue.textContent = `${Math.round(state.detectionSensitivity * 100)}%`;
 }
 
 function renderSampleOptions() {
@@ -468,6 +881,43 @@ function setActiveSample(sampleId) {
   state.selectedSampleId = sampleId;
   for (const node of sampleGrid.children) {
     node.classList.toggle("active", node.dataset.sampleId === sampleId);
+  }
+}
+
+function renderFabricOptions() {
+  fabricGrid.innerHTML = "";
+
+  for (const fabric of fabrics) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "fabric-option";
+    item.classList.toggle("active", fabric.id === state.selectedFabricId);
+    item.dataset.fabricId = fabric.id;
+
+    const swatch = document.createElement("span");
+    swatch.className = "fabric-swatch";
+
+    if (fabric.kind === "color") {
+      swatch.style.background = fabric.value;
+    } else {
+      const tile = state.patternTiles[fabric.tileId];
+      swatch.style.backgroundImage = `url("${tile.dataUrl}")`;
+      swatch.style.backgroundSize = "64px 64px";
+    }
+
+    const label = document.createElement("span");
+    label.className = "fabric-label";
+    label.textContent = fabric.label;
+
+    item.append(swatch, label);
+    item.addEventListener("click", () => {
+      state.selectedFabricId = fabric.id;
+      for (const node of fabricGrid.children) {
+        node.classList.toggle("active", node.dataset.fabricId === fabric.id);
+      }
+      renderPreview();
+    });
+    fabricGrid.appendChild(item);
   }
 }
 
@@ -515,6 +965,17 @@ function hexToRgb(hexValue) {
   return rgb;
 }
 
+function colorDistance(r1, g1, b1, r2, g2, b2) {
+  const dr = r1 - r2;
+  const dg = g1 - g2;
+  const db = b1 - b2;
+  return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function luminance(r, g, b) {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 function clamp(value, min, max) {
   if (value < min) {
     return min;
@@ -523,6 +984,64 @@ function clamp(value, min, max) {
     return max;
   }
   return value;
+}
+
+function dilateMask(mask, width, height) {
+  const out = new Uint8Array(mask.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const p = y * width + x;
+      if (mask[p]) {
+        out[p] = 1;
+        continue;
+      }
+      let on = false;
+      for (let oy = -1; oy <= 1 && !on; oy += 1) {
+        for (let ox = -1; ox <= 1; ox += 1) {
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            continue;
+          }
+          if (mask[ny * width + nx]) {
+            on = true;
+            break;
+          }
+        }
+      }
+      out[p] = on ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+function erodeMask(mask, width, height) {
+  const out = new Uint8Array(mask.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const p = y * width + x;
+      if (!mask[p]) {
+        continue;
+      }
+      let keep = true;
+      for (let oy = -1; oy <= 1 && keep; oy += 1) {
+        for (let ox = -1; ox <= 1; ox += 1) {
+          const nx = x + ox;
+          const ny = y + oy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) {
+            keep = false;
+            break;
+          }
+          if (!mask[ny * width + nx]) {
+            keep = false;
+            break;
+          }
+        }
+      }
+      out[p] = keep ? 1 : 0;
+    }
+  }
+  return out;
 }
 
 function createPatternTiles() {
