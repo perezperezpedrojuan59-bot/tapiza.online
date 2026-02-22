@@ -1,39 +1,19 @@
-export const PLAN_CATALOG = {
-  free: {
-    id: 'free',
-    name: 'Gratis',
-    description: 'Plan de prueba sin suscripcion.',
-    monthlyPriceCents: 0,
-    free: true,
-  },
-  basic: {
-    id: 'basic',
-    name: 'Basico',
-    description: 'Tapiceros autonomos.',
-    monthlyPriceCents: 1900,
-  },
-  professional: {
-    id: 'professional',
-    name: 'Profesional',
-    description: 'Decoradores y estudios de interiorismo.',
-    monthlyPriceCents: 4900,
-  },
-  business: {
-    id: 'business',
-    name: 'Business',
-    description: 'Equipos contract y empresas.',
-    monthlyPriceCents: 9900,
-  },
-  enterprise: {
-    id: 'enterprise',
-    name: 'Enterprise',
-    description: 'Grandes estudios con soporte dedicado.',
-    monthlyPriceCents: 24900,
-  },
-}
+import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
+
+export const PLAN_CATALOG = Object.fromEntries(
+  PLAN_DEFINITIONS.map((plan) => [
+    plan.id,
+    {
+      id: plan.id,
+      name: plan.name,
+      description: plan.description,
+      monthlyPriceCents: Math.round(plan.monthlyPrice * 100),
+      free: plan.monthlyPrice <= 0,
+    },
+  ]),
+)
 
 export const PLAN_IDS = Object.keys(PLAN_CATALOG)
-export const ANNUAL_DISCOUNT_RATE = 0.2
 
 export const resolveBillingCycle = (value) => (value === 'annual' ? 'annual' : 'monthly')
 

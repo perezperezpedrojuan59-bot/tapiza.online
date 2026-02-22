@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
 import './App.css'
 
 const assetUrl = (path) => {
@@ -453,78 +454,7 @@ const FABRICS = [
   },
 ]
 
-const PLANS = [
-  {
-    id: 'free',
-    name: 'Gratis',
-    audience: 'Probadores',
-    monthlyPrice: 0,
-    current: true,
-    icon: 'FREE',
-    cta: 'Plan actual',
-    features: ['5 renders/mes', 'Catalogo basico', 'Descarga de imagenes'],
-  },
-  {
-    id: 'basic',
-    name: 'Basico',
-    audience: 'Tapiceros autonomos',
-    monthlyPrice: 19,
-    icon: 'BASIC',
-    cta: 'Suscribirse',
-    features: [
-      '50 renders/mes',
-      'Catalogo completo',
-      'Subir 5 telas propias',
-      'Soporte por email',
-    ],
-  },
-  {
-    id: 'professional',
-    name: 'Profesional',
-    audience: 'Decoradores',
-    monthlyPrice: 49,
-    popular: true,
-    icon: 'PRO',
-    cta: 'Suscribirse',
-    features: [
-      '200 renders/mes',
-      'Subir muebles y telas',
-      'Marcas favoritas',
-      'Historial de proyectos',
-      'Soporte prioritario',
-    ],
-  },
-  {
-    id: 'business',
-    name: 'Business',
-    audience: 'Contract / Empresas',
-    monthlyPrice: 99,
-    icon: 'BIZ',
-    cta: 'Suscribirse',
-    features: [
-      'Renders ilimitados',
-      'API access',
-      'Multi-usuario (5)',
-      'Brand customization',
-      'Soporte dedicado',
-    ],
-  },
-  {
-    id: 'enterprise',
-    name: 'Enterprise',
-    audience: 'Grandes estudios',
-    monthlyPrice: 249,
-    icon: 'ENT',
-    cta: 'Suscribirse',
-    features: [
-      'Todo lo de Business',
-      'SLA garantizado',
-      'Integraciones custom',
-      'Account manager',
-      'Onboarding personalizado',
-    ],
-  },
-]
+const PLANS = PLAN_DEFINITIONS
 
 const CATALOG_CARDS = [
   {
@@ -683,7 +613,9 @@ function App() {
   const formatPrice = (plan) => {
     if (plan.monthlyPrice === 0) return 'Gratis'
 
-    const value = annualBilling ? Math.round(plan.monthlyPrice * 0.8) : plan.monthlyPrice
+    const value = annualBilling
+      ? Math.round(plan.monthlyPrice * (1 - ANNUAL_DISCOUNT_RATE))
+      : plan.monthlyPrice
     return `EUR ${value}`
   }
 
