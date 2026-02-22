@@ -7,9 +7,8 @@ App web para **tapizar virtualmente** muebles a partir de una foto.
 - Carga una imagen local (sofa, sillon, cabecera, etc.).
 - Incluye ejemplos realistas precargados: cabecero, cabecero capitonado, silla, sillon, sofa y puff.
 - Detecta automaticamente la zona tapizable del mueble.
-- Permite recalcular la deteccion con un control de sensibilidad.
-- Ofrece telas por color y por patron.
-- Ajusta intensidad del acabado.
+- Incluye las 34 telas ACANTO (scrapeadas de Froca) para seleccionar.
+- Permite subir una foto de tela propia para aplicarla como patron.
 - Alterna entre vista original y resultado.
 - Descarga la imagen final en PNG.
 
@@ -47,10 +46,8 @@ python3 -m http.server 8080
 ## Flujo recomendado
 
 1. Carga foto o elige un ejemplo realista.
-2. La app detecta sola la zona de tela.
-3. Si hace falta, ajusta sensibilidad y recalcula deteccion.
-4. Cambia colores/patrones y ajusta intensidad.
-5. Descarga el resultado.
+2. Carga foto de la tela o elige una de las 34 ACANTO.
+3. Muestra el resultado y descarga.
 
 ## Notas tecnicas
 
@@ -60,7 +57,7 @@ python3 -m http.server 8080
 
 ## Creditos de imagenes de ejemplo
 
-Las fotos de muestra incluidas en `assets/samples/` provienen de Unsplash:
+Las fotos de muestra incluidas en `assets/samples/` provienen de Unsplash y catalogos de Dico:
 
 - Cabecero: https://unsplash.com/photos/a-bed-with-a-fancy-headboard-in-a-bedroom-NNBnzeakKK0
 - Cabecero capitonado: https://sureste.dico.com.mx/recamara/cabecera-king-size-estela-beige-1.html
@@ -68,3 +65,7 @@ Las fotos de muestra incluidas en `assets/samples/` provienen de Unsplash:
 - Sillon: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sillon-gris-london_sal38447s1-d-3.jpg
 - Sofa: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sofa-gris-london_sal38445s1-d-1.jpg
 - Puff: https://unsplash.com/photos/a-living-room-with-a-large-window-and-a-white-ottoman-6DpsNbYFXMw
+
+## Fuente de telas ACANTO
+
+- Coleccion: https://froca.com/es/art/tapiceria-ACANTO

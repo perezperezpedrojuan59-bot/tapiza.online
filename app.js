@@ -1,16 +1,14 @@
 "use strict";
 
 const MAX_IMAGE_SIDE = 1280;
+const DETECTION_SENSITIVITY = 1;
+const UPHOLSTERY_STRENGTH = 0.95;
+const TILE_SIZE = 64;
 
 const previewCanvas = document.getElementById("previewCanvas");
 const previewCtx = previewCanvas.getContext("2d", { willReadFrequently: true });
 const imageInput = document.getElementById("imageInput");
-const detectionRange = document.getElementById("detectionRange");
-const detectionValue = document.getElementById("detectionValue");
-const detectBtn = document.getElementById("detectBtn");
-const opacityRange = document.getElementById("opacityRange");
-const opacityValue = document.getElementById("opacityValue");
-const showMaskInput = document.getElementById("showMask");
+const fabricImageInput = document.getElementById("fabricImageInput");
 const showOriginalInput = document.getElementById("showOriginal");
 const downloadBtn = document.getElementById("downloadBtn");
 const fabricGrid = document.getElementById("fabricGrid");
@@ -21,35 +19,21 @@ const state = {
   hasImage: false,
   width: previewCanvas.width,
   height: previewCanvas.height,
-  opacity: Number(opacityRange.value),
-  detectionSensitivity: Number(detectionRange.value),
-  showMaskGuide: showMaskInput.checked,
   showOriginal: showOriginalInput.checked,
   selectedFabricId: null,
   selectedSampleId: null,
   isDetecting: false,
   detectionJob: 0,
-  hexCache: new Map(),
   baseImageData: null,
-  patternTiles: createPatternTiles(),
+  patternTiles: {},
+  tilePromises: new Map(),
+  fabrics: buildAcantoFabrics(),
   baseCanvas: document.createElement("canvas"),
   maskCanvas: document.createElement("canvas"),
 };
 
 const baseCtx = state.baseCanvas.getContext("2d", { willReadFrequently: true });
 const maskCtx = state.maskCanvas.getContext("2d", { willReadFrequently: true });
-
-const fabrics = [
-  { id: "c-arena", kind: "color", label: "Arena", value: "#c8a47f" },
-  { id: "c-grafito", kind: "color", label: "Grafito", value: "#4b535c" },
-  { id: "c-azul", kind: "color", label: "Azul petroleo", value: "#2f5d62" },
-  { id: "c-oliva", kind: "color", label: "Verde oliva", value: "#68764b" },
-  { id: "c-terracota", kind: "color", label: "Terracota", value: "#b56449" },
-  { id: "p-lino", kind: "pattern", label: "Lino", tileId: "lino" },
-  { id: "p-rayas", kind: "pattern", label: "Rayas", tileId: "rayas" },
-  { id: "p-cuadros", kind: "pattern", label: "Cuadros", tileId: "cuadros" },
-  { id: "p-espiga", kind: "pattern", label: "Espiga", tileId: "espiga" },
-];
 
 const furnitureSamples = [
   { id: "cabecero", label: "Cabecero", src: "assets/samples/cabecero.jpg" },
@@ -64,38 +48,17 @@ const furnitureSamples = [
   { id: "puff", label: "Puff", src: "assets/samples/puff.jpg" },
 ];
 
-state.selectedFabricId = fabrics[0].id;
-syncReadouts();
+state.selectedFabricId = state.fabrics[0] ? state.fabrics[0].id : null;
 renderSampleOptions();
 renderFabricOptions();
 resetCanvas();
 attachEvents();
+ensureSelectedFabricReady();
 
 function attachEvents() {
-  imageInput.addEventListener("change", onImagePicked);
+  imageInput.addEventListener("change", onFurnitureImagePicked);
+  fabricImageInput.addEventListener("change", onFabricImagePicked);
 
-  detectionRange.addEventListener("input", () => {
-    state.detectionSensitivity = Number(detectionRange.value);
-    syncReadouts();
-  });
-  detectionRange.addEventListener("change", () => {
-    if (state.hasImage) {
-      runAutoDetection();
-    }
-  });
-
-  detectBtn.addEventListener("click", runAutoDetection);
-
-  opacityRange.addEventListener("input", () => {
-    state.opacity = Number(opacityRange.value);
-    syncReadouts();
-    renderPreview();
-  });
-
-  showMaskInput.addEventListener("change", () => {
-    state.showMaskGuide = showMaskInput.checked;
-    renderPreview();
-  });
   showOriginalInput.addEventListener("change", () => {
     state.showOriginal = showOriginalInput.checked;
     renderPreview();
@@ -104,7 +67,7 @@ function attachEvents() {
   downloadBtn.addEventListener("click", downloadResult);
 }
 
-function onImagePicked(event) {
+function onFurnitureImagePicked(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) {
     return;
@@ -115,6 +78,49 @@ function onImagePicked(event) {
     revokeObjectUrl: true,
     errorMessage: "No se pudo cargar la imagen. Intenta con otro archivo.",
   });
+}
+
+function onFabricImagePicked(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) {
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  createTileFromImageSource(objectUrl, { revokeObjectUrl: true })
+    .then((tile) => {
+      upsertCustomFabric(tile);
+      renderFabricOptions();
+      renderPreview();
+      fabricImageInput.value = "";
+    })
+    .catch(() => {
+      alert("No se pudo cargar la tela. Prueba con otra imagen.");
+    });
+}
+
+function upsertCustomFabric(tile) {
+  const id = "custom-upload";
+  const tileId = "custom-upload";
+  state.patternTiles[tileId] = tile;
+
+  const customFabric = {
+    id,
+    kind: "pattern-image",
+    label: "Tela subida",
+    tileId,
+    src: tile.dataUrl,
+    previewSrc: tile.dataUrl,
+    fallbackRgb: tile.avg,
+  };
+
+  const idx = state.fabrics.findIndex((fabric) => fabric.id === id);
+  if (idx >= 0) {
+    state.fabrics[idx] = customFabric;
+  } else {
+    state.fabrics.unshift(customFabric);
+  }
+  state.selectedFabricId = id;
 }
 
 function loadImageIntoEditor(source, options = {}) {
@@ -133,7 +139,6 @@ function loadImageIntoEditor(source, options = {}) {
     showOriginalInput.checked = false;
     emptyState.classList.add("hidden");
     downloadBtn.disabled = false;
-    detectBtn.disabled = false;
     runAutoDetection();
     if (revokeObjectUrl) {
       URL.revokeObjectURL(source);
@@ -153,7 +158,6 @@ function loadImageIntoEditor(source, options = {}) {
 function setupCanvases(width, height) {
   state.width = width;
   state.height = height;
-
   previewCanvas.width = width;
   previewCanvas.height = height;
   state.baseCanvas.width = width;
@@ -171,9 +175,6 @@ function runAutoDetection() {
   state.detectionJob += 1;
   const jobId = state.detectionJob;
 
-  detectBtn.disabled = true;
-  detectBtn.textContent = "Detectando...";
-
   window.setTimeout(() => {
     if (jobId !== state.detectionJob || !state.baseImageData) {
       return;
@@ -183,15 +184,12 @@ function runAutoDetection() {
       state.baseImageData,
       state.width,
       state.height,
-      state.detectionSensitivity
+      DETECTION_SENSITIVITY
     );
 
     writeMaskToCanvas(autoMask, state.width, state.height);
-    renderPreview();
-
     state.isDetecting = false;
-    detectBtn.disabled = false;
-    detectBtn.textContent = "Recalcular deteccion";
+    ensureSelectedFabricReady().finally(renderPreview);
   }, 0);
 }
 
@@ -256,7 +254,7 @@ function estimateBackgroundColor(data, width, height) {
   }
 
   for (let y = 0; y < height; y += step) {
-    let idxLeft = (y * width) * 4;
+    let idxLeft = y * width * 4;
     sumR += data[idxLeft];
     sumG += data[idxLeft + 1];
     sumB += data[idxLeft + 2];
@@ -732,21 +730,16 @@ function renderPreview() {
 
   drawCompositeToContext(previewCtx, {
     showOriginal: state.showOriginal,
-    showGuide: state.showMaskGuide,
   });
 }
 
 function drawCompositeToContext(targetCtx, options) {
   const showOriginal = Boolean(options && options.showOriginal);
-  const showGuide = Boolean(options && options.showGuide);
   const width = state.width;
   const height = state.height;
 
   if (showOriginal) {
     targetCtx.putImageData(state.baseImageData, 0, 0);
-    if (showGuide) {
-      drawMaskGuide(targetCtx);
-    }
     return;
   }
 
@@ -755,10 +748,13 @@ function drawCompositeToContext(targetCtx, options) {
   const baseData = state.baseImageData.data;
   const output = targetCtx.createImageData(width, height);
   const out = output.data;
-  const opacity = state.opacity;
 
-  const colorRgb = selected.kind === "color" ? hexToRgb(selected.value) : null;
-  const pattern = selected.kind === "pattern" ? state.patternTiles[selected.tileId] : null;
+  const pattern =
+    selected && selected.kind === "pattern-image"
+      ? state.patternTiles[selected.tileId] || null
+      : null;
+  const fallbackColor =
+    selected && selected.fallbackRgb ? selected.fallbackRgb : { r: 180, g: 180, b: 180 };
 
   let idx = 0;
   for (let y = 0; y < height; y += 1) {
@@ -778,19 +774,16 @@ function drawCompositeToContext(targetCtx, options) {
         continue;
       }
 
-      let fabricR;
-      let fabricG;
-      let fabricB;
+      let fabricR = fallbackColor.r;
+      let fabricG = fallbackColor.g;
+      let fabricB = fallbackColor.b;
+
       if (pattern) {
         const pIndex =
           (((y % pattern.size) * pattern.size + (x % pattern.size)) * 4) | 0;
         fabricR = pattern.data[pIndex];
         fabricG = pattern.data[pIndex + 1];
         fabricB = pattern.data[pIndex + 2];
-      } else {
-        fabricR = colorRgb.r;
-        fabricG = colorRgb.g;
-        fabricB = colorRgb.b;
       }
 
       const light = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
@@ -799,7 +792,7 @@ function drawCompositeToContext(targetCtx, options) {
       const shadedG = clamp(Math.round(fabricG * shade), 0, 255);
       const shadedB = clamp(Math.round(fabricB * shade), 0, 255);
 
-      const strength = maskAlpha * opacity;
+      const strength = maskAlpha * UPHOLSTERY_STRENGTH;
       out[idx] = Math.round(r * (1 - strength * 0.35) + shadedR * strength);
       out[idx + 1] = Math.round(g * (1 - strength * 0.35) + shadedG * strength);
       out[idx + 2] = Math.round(b * (1 - strength * 0.35) + shadedB * strength);
@@ -809,18 +802,6 @@ function drawCompositeToContext(targetCtx, options) {
   }
 
   targetCtx.putImageData(output, 0, 0);
-  if (showGuide) {
-    drawMaskGuide(targetCtx);
-  }
-}
-
-function drawMaskGuide(targetCtx) {
-  targetCtx.save();
-  targetCtx.fillStyle = "rgba(72, 182, 255, 0.25)";
-  targetCtx.fillRect(0, 0, state.width, state.height);
-  targetCtx.globalCompositeOperation = "destination-in";
-  targetCtx.drawImage(state.maskCanvas, 0, 0);
-  targetCtx.restore();
 }
 
 function downloadResult() {
@@ -834,7 +815,6 @@ function downloadResult() {
 
   drawCompositeToContext(exportCtx, {
     showOriginal: false,
-    showGuide: false,
   });
 
   const anchor = document.createElement("a");
@@ -842,11 +822,6 @@ function downloadResult() {
   anchor.href = exportCanvas.toDataURL("image/png");
   anchor.download = `tapizado-virtual-${stamp}.png`;
   anchor.click();
-}
-
-function syncReadouts() {
-  opacityValue.textContent = `${Math.round(state.opacity * 100)}%`;
-  detectionValue.textContent = `${Math.round(state.detectionSensitivity * 100)}%`;
 }
 
 function renderSampleOptions() {
@@ -892,7 +867,7 @@ function setActiveSample(sampleId) {
 function renderFabricOptions() {
   fabricGrid.innerHTML = "";
 
-  for (const fabric of fabrics) {
+  for (const fabric of state.fabrics) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "fabric-option";
@@ -901,14 +876,9 @@ function renderFabricOptions() {
 
     const swatch = document.createElement("span");
     swatch.className = "fabric-swatch";
-
-    if (fabric.kind === "color") {
-      swatch.style.background = fabric.value;
-    } else {
-      const tile = state.patternTiles[fabric.tileId];
-      swatch.style.backgroundImage = `url("${tile.dataUrl}")`;
-      swatch.style.backgroundSize = "64px 64px";
-    }
+    swatch.style.backgroundImage = `url("${fabric.previewSrc || fabric.src}")`;
+    swatch.style.backgroundSize = "cover";
+    swatch.style.backgroundPosition = "center";
 
     const label = document.createElement("span");
     label.className = "fabric-label";
@@ -920,14 +890,132 @@ function renderFabricOptions() {
       for (const node of fabricGrid.children) {
         node.classList.toggle("active", node.dataset.fabricId === fabric.id);
       }
-      renderPreview();
+      ensureFabricTile(fabric).finally(renderPreview);
     });
     fabricGrid.appendChild(item);
   }
 }
 
+function buildAcantoFabrics() {
+  const list = [];
+  for (let i = 1; i <= 34; i += 1) {
+    const code = String(i).padStart(2, "0");
+    list.push({
+      id: `acanto-${code}`,
+      kind: "pattern-image",
+      label: `ACANTO ${code}`,
+      tileId: `acanto-${code}`,
+      src: `assets/fabrics/acanto/acanto-${code}.webp`,
+      previewSrc: `assets/fabrics/acanto/acanto-${code}.webp`,
+      fallbackRgb: { r: 180, g: 180, b: 180 },
+    });
+  }
+  return list;
+}
+
 function getSelectedFabric() {
-  return fabrics.find((fabric) => fabric.id === state.selectedFabricId) || fabrics[0];
+  return (
+    state.fabrics.find((fabric) => fabric.id === state.selectedFabricId) || state.fabrics[0]
+  );
+}
+
+function ensureSelectedFabricReady() {
+  const selected = getSelectedFabric();
+  return ensureFabricTile(selected);
+}
+
+function ensureFabricTile(fabric) {
+  if (!fabric || fabric.kind !== "pattern-image") {
+    return Promise.resolve();
+  }
+  if (state.patternTiles[fabric.tileId]) {
+    return Promise.resolve();
+  }
+
+  if (state.tilePromises.has(fabric.tileId)) {
+    return state.tilePromises.get(fabric.tileId);
+  }
+
+  const promise = createTileFromImageSource(fabric.src)
+    .then((tile) => {
+      state.patternTiles[fabric.tileId] = tile;
+      fabric.fallbackRgb = tile.avg;
+    })
+    .catch(() => {
+      // Keep fallback color if loading fails.
+    })
+    .finally(() => {
+      state.tilePromises.delete(fabric.tileId);
+    });
+
+  state.tilePromises.set(fabric.tileId, promise);
+  return promise;
+}
+
+function createTileFromImageSource(source, options = {}) {
+  const revokeObjectUrl = Boolean(options.revokeObjectUrl);
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = TILE_SIZE;
+        canvas.height = TILE_SIZE;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+        const minSide = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.floor((img.naturalWidth - minSide) / 2);
+        const sy = Math.floor((img.naturalHeight - minSide) / 2);
+        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, TILE_SIZE, TILE_SIZE);
+
+        const imageData = ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE);
+        const avg = averageRgb(imageData.data);
+
+        if (revokeObjectUrl) {
+          URL.revokeObjectURL(source);
+        }
+
+        resolve({
+          size: TILE_SIZE,
+          data: imageData.data,
+          dataUrl: canvas.toDataURL(),
+          avg,
+        });
+      } catch (error) {
+        if (revokeObjectUrl) {
+          URL.revokeObjectURL(source);
+        }
+        reject(error);
+      }
+    };
+
+    img.onerror = () => {
+      if (revokeObjectUrl) {
+        URL.revokeObjectURL(source);
+      }
+      reject(new Error("No se pudo cargar la imagen de tela."));
+    };
+
+    img.src = source;
+  });
+}
+
+function averageRgb(data) {
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  const pixels = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    r += data[i];
+    g += data[i + 1];
+    b += data[i + 2];
+  }
+  return {
+    r: Math.round(r / pixels),
+    g: Math.round(g / pixels),
+    b: Math.round(b / pixels),
+  };
 }
 
 function resetCanvas() {
@@ -946,28 +1034,6 @@ function fitInBounds(width, height, maxSide) {
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   };
-}
-
-function hexToRgb(hexValue) {
-  if (state.hexCache.has(hexValue)) {
-    return state.hexCache.get(hexValue);
-  }
-
-  let hex = hexValue.replace("#", "").trim();
-  if (hex.length === 3) {
-    hex = hex
-      .split("")
-      .map((char) => char + char)
-      .join("");
-  }
-  const intVal = Number.parseInt(hex, 16);
-  const rgb = {
-    r: (intVal >> 16) & 255,
-    g: (intVal >> 8) & 255,
-    b: intVal & 255,
-  };
-  state.hexCache.set(hexValue, rgb);
-  return rgb;
 }
 
 function colorDistance(r1, g1, b1, r2, g2, b2) {
@@ -1047,125 +1113,4 @@ function erodeMask(mask, width, height) {
     }
   }
   return out;
-}
-
-function createPatternTiles() {
-  return {
-    lino: createLinenTile(),
-    rayas: createStripeTile(),
-    cuadros: createCheckeredTile(),
-    espiga: createHerringboneTile(),
-  };
-}
-
-function createLinenTile() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#ceb396";
-  ctx.fillRect(0, 0, size, size);
-
-  for (let x = 0; x < size; x += 4) {
-    const alpha = 0.08 + ((x / 4) % 3) * 0.04;
-    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-    ctx.fillRect(x, 0, 1, size);
-  }
-  for (let y = 0; y < size; y += 5) {
-    const alpha = 0.05 + ((y / 5) % 4) * 0.03;
-    ctx.fillStyle = `rgba(75,48,28,${alpha})`;
-    ctx.fillRect(0, y, size, 1);
-  }
-
-  return tileFromCanvas(canvas, ctx, size);
-}
-
-function createStripeTile() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#7f9aa6";
-  ctx.fillRect(0, 0, size, size);
-  for (let x = 0; x < size; x += 12) {
-    ctx.fillStyle = "#d7d7d4";
-    ctx.fillRect(x, 0, 5, size);
-  }
-  for (let y = 0; y < size; y += 8) {
-    ctx.fillStyle = "rgba(31,42,59,0.12)";
-    ctx.fillRect(0, y, size, 1);
-  }
-
-  return tileFromCanvas(canvas, ctx, size);
-}
-
-function createCheckeredTile() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  const block = 16;
-  for (let y = 0; y < size; y += block) {
-    for (let x = 0; x < size; x += block) {
-      const dark = ((x + y) / block) % 2 === 0;
-      ctx.fillStyle = dark ? "#808489" : "#b0b4b6";
-      ctx.fillRect(x, y, block, block);
-    }
-  }
-  ctx.strokeStyle = "rgba(30,35,45,0.2)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= size; i += block) {
-    ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, size);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(size, i);
-    ctx.stroke();
-  }
-
-  return tileFromCanvas(canvas, ctx, size);
-}
-
-function createHerringboneTile() {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle = "#9f6f4d";
-  ctx.fillRect(0, 0, size, size);
-  ctx.strokeStyle = "rgba(255,230,210,0.35)";
-  ctx.lineWidth = 3;
-
-  for (let x = -size; x < size * 2; x += 16) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x + size, size);
-    ctx.stroke();
-  }
-  for (let x = 0; x < size * 2; x += 16) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x - size, size);
-    ctx.stroke();
-  }
-
-  return tileFromCanvas(canvas, ctx, size);
-}
-
-function tileFromCanvas(canvas, ctx, size) {
-  return {
-    size,
-    data: ctx.getImageData(0, 0, size, size).data,
-    dataUrl: canvas.toDataURL(),
-  };
 }

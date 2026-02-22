@@ -25,59 +25,20 @@
         </section>
 
         <section>
-          <h2>2) Deteccion automatica de tapizado</h2>
+          <h2>2) Carga foto de la tela o elige una</h2>
+          <input id="fabricImageInput" type="file" accept="image/*" />
           <p class="hint">
-            La app detecta sola la tela original del mueble para aplicar el nuevo
-            acabado sin pintar a mano.
+            Puedes subir una textura real de tela y se aplicar&aacute; como patr&oacute;n.
           </p>
-          <label for="detectionRange">
-            Sensibilidad de deteccion:
-            <span id="detectionValue" class="value-badge">100%</span>
-          </label>
-          <input
-            id="detectionRange"
-            type="range"
-            min="0.7"
-            max="1.5"
-            value="1"
-            step="0.05"
-          />
-          <button id="detectBtn" type="button" disabled>
-            Recalcular deteccion
-          </button>
-        </section>
-
-        <section>
-          <h2>3) Elige una tela</h2>
           <div id="fabricGrid" class="fabric-grid" aria-label="Opciones de tela"></div>
         </section>
 
         <section>
-          <h2>4) Ajusta el acabado</h2>
-          <label for="opacityRange">
-            Intensidad del tapizado:
-            <span id="opacityValue" class="value-badge">80%</span>
-          </label>
-          <input
-            id="opacityRange"
-            type="range"
-            min="0.2"
-            max="1"
-            value="0.8"
-            step="0.05"
-          />
-
-          <div class="option">
-            <input id="showMask" type="checkbox" checked />
-            <label for="showMask">Mostrar gu&iacute;a de m&aacute;scara</label>
-          </div>
+          <h2>3) Muestra el resultado</h2>
           <div class="option">
             <input id="showOriginal" type="checkbox" />
             <label for="showOriginal">Ver original</label>
           </div>
-        </section>
-
-        <section>
           <button id="downloadBtn" class="download-btn" type="button" disabled>
             Descargar resultado
           </button>
