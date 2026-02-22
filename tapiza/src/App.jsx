@@ -737,7 +737,7 @@ const FABRIC_COLOR_OPTIONS = [
 ]
 
 const FABRIC_PATTERN_OPTIONS = [
-  'Todos los patrones',
+  'Todos los diseños',
   'Liso',
   'Cuadros',
   'Rayas',
@@ -931,7 +931,7 @@ function App() {
   const [selectedManufacturer, setSelectedManufacturer] = useState('Todos los fabricantes')
   const [selectedFabricType, setSelectedFabricType] = useState('Todos los tipos')
   const [selectedColorFamily, setSelectedColorFamily] = useState('Todos los colores')
-  const [selectedPattern, setSelectedPattern] = useState('Todos los patrones')
+  const [selectedPattern, setSelectedPattern] = useState('Todos los diseños')
   const [renderedPreviewSrc, setRenderedPreviewSrc] = useState('')
   const [isApplyingFabric, setIsApplyingFabric] = useState(false)
   const [renderError, setRenderError] = useState('')
@@ -1041,7 +1041,7 @@ function App() {
         const colorMatch =
           selectedColorFamily === 'Todos los colores' || fabric.colorFamily === selectedColorFamily
         const patternMatch =
-          selectedPattern === 'Todos los patrones' || fabric.pattern === selectedPattern
+          selectedPattern === 'Todos los diseños' || fabric.pattern === selectedPattern
 
         return manufacturerMatch && typeMatch && colorMatch && patternMatch
       }),
@@ -1707,7 +1707,7 @@ function App() {
                     </label>
 
                     <label className="fabric-select-field">
-                      Patron
+                      Diseño
                       <select
                         value={selectedPattern}
                         onChange={(event) => setSelectedPattern(event.target.value)}
