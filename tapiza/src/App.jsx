@@ -1569,8 +1569,8 @@ function App() {
                             <input
                               type="range"
                               min="8"
-                              max="64"
-                              step="2"
+                              max="180"
+                              step="4"
                               value={maskBrushSize}
                               onChange={(event) =>
                                 setMaskBrushSize(Number.parseInt(event.target.value, 10))
