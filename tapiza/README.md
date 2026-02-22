@@ -56,6 +56,14 @@ Configura en `.env`:
 - `POST /api/stripe/checkout-session`
 - `POST /api/stripe/webhook`
 
+### Fallback para sitios estaticos (GitHub Pages)
+
+Si `VITE_STRIPE_API_BASE_URL` no esta definido, el frontend usa enlaces directos de Stripe
+(`shared/stripePaymentLinks.js`) para abrir el checkout sin backend.
+
+- Ventaja: checkout funciona en hosting estatico.
+- Limitacion: no hay webhook propio para post-procesado en tu servidor.
+
 ### Nota de seguridad
 
 No subas ni compartas claves `sk_live` en repositorio ni en chats. Usa `.env`.

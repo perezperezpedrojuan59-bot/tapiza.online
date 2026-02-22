@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
 import { FROCA_FABRICS, FROCA_FABRIC_COUNTS } from '../shared/frocaFabrics.js'
+import { STRIPE_PAYMENT_LINKS } from '../shared/stripePaymentLinks.js'
 import './App.css'
 
 const assetUrl = (path) => {
@@ -12,6 +13,9 @@ const STRIPE_API_BASE_URL = (import.meta.env.VITE_STRIPE_API_BASE_URL || '').tri
 
 const apiUrl = (path) =>
   `${STRIPE_API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+
+const getDirectPaymentLink = (planId, billingCycle) =>
+  STRIPE_PAYMENT_LINKS[planId]?.[billingCycle] || ''
 
 const clamp = (value, min = 0, max = 255) => Math.min(max, Math.max(min, value))
 
@@ -772,9 +776,25 @@ function App() {
       return
     }
 
+    const billingCycle = annualBilling ? 'annual' : 'monthly'
+    const directPaymentLink = getDirectPaymentLink(plan.id, billingCycle)
+
     setPaymentError('')
     setPaymentNotice('')
     setCheckoutLoadingPlanId(plan.id)
+
+    if (!STRIPE_API_BASE_URL) {
+      if (!directPaymentLink) {
+        setPaymentError(
+          'Checkout no disponible: configura VITE_STRIPE_API_BASE_URL o enlaces directos de Stripe.',
+        )
+        setCheckoutLoadingPlanId('')
+        return
+      }
+
+      window.location.href = directPaymentLink
+      return
+    }
 
     try {
       const response = await fetch(apiUrl('/api/stripe/checkout-session'), {
@@ -782,22 +802,46 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planId: plan.id,
-          billingCycle: annualBilling ? 'annual' : 'monthly',
+          billingCycle,
           origin: window.location.origin,
         }),
       })
 
       if (!response.ok) {
-        throw new Error(await formatCheckoutError(response))
+        const checkoutError = await formatCheckoutError(response)
+
+        if (directPaymentLink) {
+          setPaymentNotice(
+            'Servidor de checkout no disponible temporalmente. Redirigiendo a Stripe...',
+          )
+          window.location.href = directPaymentLink
+          return
+        }
+
+        throw new Error(checkoutError)
       }
 
       const payload = await response.json()
       if (!payload?.url) {
+        if (directPaymentLink) {
+          setPaymentNotice(
+            'Servidor de checkout no disponible temporalmente. Redirigiendo a Stripe...',
+          )
+          window.location.href = directPaymentLink
+          return
+        }
+
         throw new Error('Stripe no devolvio una URL de checkout valida.')
       }
 
       window.location.href = payload.url
     } catch (error) {
+      if (directPaymentLink) {
+        setPaymentNotice('No se pudo iniciar checkout por API. Redirigiendo a Stripe...')
+        window.location.href = directPaymentLink
+        return
+      }
+
       setPaymentError(error.message || 'No se pudo iniciar el checkout de Stripe.')
     } finally {
       setCheckoutLoadingPlanId('')
