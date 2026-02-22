@@ -1,3 +1,7 @@
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import express from 'express'
@@ -12,6 +16,9 @@ import {
 
 dotenv.config()
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
 const app = express()
 const port = Number(process.env.STRIPE_SERVER_PORT || 8787)
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || ''
@@ -19,8 +26,11 @@ const stripePublishableKey = process.env.STRIPE_PUBLISHABLE_KEY || ''
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || ''
 const stripeCurrency = (process.env.STRIPE_CURRENCY || 'eur').toLowerCase()
 const defaultAppBaseUrl = process.env.APP_BASE_URL || 'http://localhost:5173'
+const authDataDirectory = path.resolve(__dirname, './data')
+const authUsersFilePath = path.resolve(authDataDirectory, 'users.json')
 
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null
+let usersLock = Promise.resolve()
 
 const normalizeOrigin = (value) => {
   try {
@@ -29,6 +39,72 @@ const normalizeOrigin = (value) => {
     return parsed.origin
   } catch {
     return null
+  }
+}
+
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+
+const sanitizeUser = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  createdAt: user.createdAt,
+})
+
+const withUsersLock = async (work) => {
+  const previousLock = usersLock
+  let releaseLock
+  usersLock = new Promise((resolve) => {
+    releaseLock = resolve
+  })
+
+  await previousLock
+  try {
+    return await work()
+  } finally {
+    releaseLock()
+  }
+}
+
+const ensureUsersFile = async () => {
+  await fs.mkdir(authDataDirectory, { recursive: true })
+  try {
+    await fs.access(authUsersFilePath)
+  } catch {
+    await fs.writeFile(authUsersFilePath, '[]', 'utf8')
+  }
+}
+
+const readUsers = async () => {
+  await ensureUsersFile()
+  try {
+    const raw = await fs.readFile(authUsersFilePath, 'utf8')
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const writeUsers = async (users) => {
+  await ensureUsersFile()
+  await fs.writeFile(authUsersFilePath, JSON.stringify(users, null, 2), 'utf8')
+}
+
+const hashPassword = (password, salt = randomBytes(16).toString('hex')) => ({
+  salt,
+  hash: scryptSync(String(password || ''), salt, 64).toString('hex'),
+})
+
+const verifyPassword = (password, salt, storedHash) => {
+  try {
+    const derived = scryptSync(String(password || ''), String(salt || ''), 64)
+    const stored = Buffer.from(String(storedHash || ''), 'hex')
+    if (stored.length !== derived.length) return false
+    return timingSafeEqual(derived, stored)
+  } catch {
+    return false
   }
 }
 
@@ -87,6 +163,82 @@ app.get('/api/stripe/config', (_req, res) => {
     availablePlans: PLAN_IDS,
     currency: stripeCurrency,
   })
+})
+
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password } = req.body || {}
+  const normalizedName = String(name || '').trim()
+  const normalizedEmail = normalizeEmail(email)
+  const normalizedPassword = String(password || '')
+
+  if (normalizedName.length < 2) {
+    return res.status(400).json({ error: 'El nombre debe tener al menos 2 caracteres.' })
+  }
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (normalizedPassword.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres.' })
+  }
+
+  try {
+    const createdUser = await withUsersLock(async () => {
+      const users = await readUsers()
+      if (users.some((user) => user.email === normalizedEmail)) {
+        return null
+      }
+
+      const { hash, salt } = hashPassword(normalizedPassword)
+      const user = {
+        id: `usr_${randomUUID()}`,
+        name: normalizedName,
+        email: normalizedEmail,
+        passwordHash: hash,
+        passwordSalt: salt,
+        createdAt: new Date().toISOString(),
+      }
+
+      users.push(user)
+      await writeUsers(users)
+      return user
+    })
+
+    if (!createdUser) {
+      return res.status(409).json({ error: 'Ya existe una cuenta registrada con ese email.' })
+    }
+
+    return res.status(201).json({ user: sanitizeUser(createdUser) })
+  } catch (error) {
+    console.error('[Auth register] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo completar el registro.' })
+  }
+})
+
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body || {}
+  const normalizedEmail = normalizeEmail(email)
+  const normalizedPassword = String(password || '')
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (!normalizedPassword) {
+    return res.status(400).json({ error: 'Contraseña requerida.' })
+  }
+
+  try {
+    const users = await readUsers()
+    const user = users.find((entry) => entry.email === normalizedEmail)
+
+    if (!user || !verifyPassword(normalizedPassword, user.passwordSalt, user.passwordHash)) {
+      return res.status(401).json({ error: 'Credenciales incorrectas.' })
+    }
+
+    return res.json({ user: sanitizeUser(user) })
+  } catch (error) {
+    console.error('[Auth login] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo iniciar sesion.' })
+  }
 })
 
 app.post('/api/stripe/checkout-session', async (req, res) => {

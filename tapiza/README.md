@@ -44,14 +44,17 @@ npm run preview
 
 Configura en `.env`:
 
+- `VITE_API_BASE_URL` (API global opcional para auth + Stripe)
 - `STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET` (opcional pero recomendado)
 - `APP_BASE_URL` (URL publica del frontend)
-- `VITE_STRIPE_API_BASE_URL` (si backend esta en otro dominio)
+- `VITE_STRIPE_API_BASE_URL` (compatibilidad, se usa si `VITE_API_BASE_URL` esta vacio)
 
 ### Endpoints backend
 
+- `POST /api/auth/register`
+- `POST /api/auth/login`
 - `GET /api/stripe/config`
 - `POST /api/stripe/checkout-session`
 - `POST /api/stripe/webhook`
@@ -63,6 +66,9 @@ Si `VITE_STRIPE_API_BASE_URL` no esta definido, el frontend usa enlaces directos
 
 - Ventaja: checkout funciona en hosting estatico.
 - Limitacion: no hay webhook propio para post-procesado en tu servidor.
+
+Para autenticacion, si el endpoint API no esta disponible, la app usa almacenamiento local
+en navegador para permitir registro/inicio de sesion en modo demo.
 
 ### Nota de seguridad
 

@@ -82,6 +82,25 @@
   gap: 0.6rem;
 }
 
+.auth-chip {
+  border: 1px solid #d3dbe8;
+  background: #f7f9fc;
+  color: var(--brand-primary);
+  border-radius: 999px;
+  padding: 0.35rem 0.62rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.auth-global-notice {
+  margin: 0.7rem 0 0;
+  background: #e0f2fe;
+  color: #0c4a6e;
+  border-radius: 0.6rem;
+  padding: 0.58rem 0.72rem;
+  font-size: 0.82rem;
+}
+
 .menu-btn {
   display: none;
   border: 1px solid #d5dbe5;
@@ -105,6 +124,108 @@
   color: var(--brand-primary);
   padding: 0.75rem 0.9rem;
   border-radius: 0.6rem;
+}
+
+.auth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.auth-modal {
+  width: min(440px, 100%);
+  border-radius: 0.9rem;
+  border: 1px solid #d8dfeb;
+  background: #fff;
+  padding: 1rem;
+  box-shadow: 0 26px 60px rgba(15, 23, 42, 0.28);
+}
+
+.auth-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.72rem;
+}
+
+.auth-modal-head h3 {
+  margin: 0;
+  color: var(--brand-primary);
+}
+
+.auth-modal-close {
+  border: 0;
+  background: #eef2f7;
+  color: #334155;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.42rem;
+  margin-bottom: 0.75rem;
+}
+
+.auth-mode-btn {
+  border: 1px solid #d8dfeb;
+  border-radius: 0.58rem;
+  background: #fff;
+  color: #334155;
+  padding: 0.46rem 0.54rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.auth-mode-btn.active {
+  border-color: var(--brand-gold);
+  background: #f9efe0;
+  color: #7a4e17;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: 0.28rem;
+  color: #475569;
+  font-size: 0.79rem;
+}
+
+.auth-field input {
+  border: 1px solid #d4dcea;
+  border-radius: 0.58rem;
+  padding: 0.58rem 0.65rem;
+  font-size: 0.88rem;
+  color: #1f2937;
+}
+
+.auth-error {
+  margin: 0.7rem 0 0;
+  color: #991b1b;
+  background: #fee2e2;
+  border-radius: 0.6rem;
+  padding: 0.52rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.auth-note {
+  margin: 0.72rem 0 0;
+  color: #64748b;
+  font-size: 0.76rem;
 }
 
 .btn {

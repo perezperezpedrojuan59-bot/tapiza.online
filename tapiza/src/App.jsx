@@ -9,13 +9,132 @@ const assetUrl = (path) => {
   return `${import.meta.env.BASE_URL}${cleanPath}`
 }
 
-const STRIPE_API_BASE_URL = (import.meta.env.VITE_STRIPE_API_BASE_URL || '').trim()
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_STRIPE_API_BASE_URL ||
+  ''
+).trim()
 
-const apiUrl = (path) =>
-  `${STRIPE_API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+const apiUrl = (path) => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath
+}
 
 const getDirectPaymentLink = (planId, billingCycle) =>
   STRIPE_PAYMENT_LINKS[planId]?.[billingCycle] || ''
+
+const AUTH_USERS_STORAGE_KEY = 'tapiza.localUsers.v1'
+const AUTH_SESSION_STORAGE_KEY = 'tapiza.authSession.v1'
+
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
+const isEmailValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+
+const hashPasswordInBrowser = async (password) => {
+  const normalizedPassword = String(password || '')
+  if (!normalizedPassword) return ''
+
+  if (typeof window !== 'undefined' && window.crypto?.subtle && window.TextEncoder) {
+    const input = new TextEncoder().encode(normalizedPassword)
+    const digest = await window.crypto.subtle.digest('SHA-256', input)
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
+  }
+
+  return btoa(normalizedPassword)
+}
+
+const readLocalUsers = () => {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const raw = window.localStorage.getItem(AUTH_USERS_STORAGE_KEY)
+    if (!raw) return []
+
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const writeLocalUsers = (users) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(AUTH_USERS_STORAGE_KEY, JSON.stringify(users))
+}
+
+const sanitizeAuthUser = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: normalizeEmail(user.email),
+  createdAt: user.createdAt || new Date().toISOString(),
+  provider: user.provider || 'local',
+})
+
+const saveAuthSession = (user) => {
+  if (typeof window === 'undefined' || !user) return
+  window.localStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(sanitizeAuthUser(user)))
+}
+
+const readAuthSession = () => {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(AUTH_SESSION_STORAGE_KEY)
+    if (!raw) return null
+    return sanitizeAuthUser(JSON.parse(raw))
+  } catch {
+    return null
+  }
+}
+
+const clearAuthSession = () => {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem(AUTH_SESSION_STORAGE_KEY)
+}
+
+const registerLocalUser = async ({ name, email, password }) => {
+  const normalizedEmail = normalizeEmail(email)
+  const users = readLocalUsers()
+
+  if (users.some((user) => normalizeEmail(user.email) === normalizedEmail)) {
+    throw new Error('Ya existe una cuenta registrada con ese email.')
+  }
+
+  const passwordHash = await hashPasswordInBrowser(password)
+  const user = {
+    id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    name: String(name || '').trim(),
+    email: normalizedEmail,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+    provider: 'local',
+  }
+
+  users.push(user)
+  writeLocalUsers(users)
+  saveAuthSession(user)
+  return sanitizeAuthUser(user)
+}
+
+const loginLocalUser = async ({ email, password }) => {
+  const normalizedEmail = normalizeEmail(email)
+  const users = readLocalUsers()
+  const existingUser = users.find((user) => normalizeEmail(user.email) === normalizedEmail)
+
+  if (!existingUser) {
+    throw new Error('No existe una cuenta con ese email.')
+  }
+
+  const passwordHash = await hashPasswordInBrowser(password)
+  if (passwordHash !== existingUser.passwordHash) {
+    throw new Error('La contraseña es incorrecta.')
+  }
+
+  const user = sanitizeAuthUser(existingUser)
+  saveAuthSession(user)
+  return user
+}
 
 const clamp = (value, min = 0, max = 255) => Math.min(max, Math.max(min, value))
 
@@ -927,6 +1046,17 @@ const formatCheckoutError = async (response) => {
   return 'No se pudo iniciar el checkout de Stripe.'
 }
 
+const formatApiError = async (response, fallbackMessage) => {
+  try {
+    const payload = await response.json()
+    if (payload?.error) return payload.error
+  } catch {
+    return fallbackMessage
+  }
+
+  return fallbackMessage
+}
+
 function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [activeTab, setActiveTab] = useState('furniture')
@@ -956,6 +1086,16 @@ function App() {
   const [maskEditorRevision, setMaskEditorRevision] = useState(0)
   const [isSavingMask, setIsSavingMask] = useState(false)
   const [maskCoveragePercent, setMaskCoveragePercent] = useState(100)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authMode, setAuthMode] = useState('register')
+  const [authName, setAuthName] = useState('')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authNotice, setAuthNotice] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
 
   const upholsteryMaskByFurnitureRef = useRef(new Map())
   const maskEditorCanvasRef = useRef(null)
@@ -965,6 +1105,161 @@ function App() {
   const maskEditorFurnitureAlphaRef = useRef(null)
   const maskEditorDrawingRef = useRef(false)
   const maskEditorLastPointRef = useRef(null)
+
+  useEffect(() => {
+    const persistedSession = readAuthSession()
+    if (persistedSession) {
+      setCurrentUser(persistedSession)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authModalOpen) return undefined
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setAuthModalOpen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [authModalOpen])
+
+  const resetAuthForm = () => {
+    setAuthName('')
+    setAuthEmail('')
+    setAuthPassword('')
+    setAuthConfirmPassword('')
+    setAuthError('')
+  }
+
+  const openAuthModal = (mode = 'register') => {
+    setAuthMode(mode)
+    setAuthModalOpen(true)
+    setAuthNotice('')
+    setAuthError('')
+  }
+
+  const closeAuthModal = () => {
+    setAuthModalOpen(false)
+    setAuthLoading(false)
+  }
+
+  const switchAuthMode = (mode) => {
+    setAuthMode(mode)
+    setAuthError('')
+    setAuthNotice('')
+    setAuthPassword('')
+    setAuthConfirmPassword('')
+  }
+
+  const handleLogout = () => {
+    clearAuthSession()
+    setCurrentUser(null)
+    setAuthNotice('Sesion cerrada correctamente.')
+    setAuthError('')
+  }
+
+  const submitAuth = async (event) => {
+    event.preventDefault()
+
+    const normalizedName = authName.trim()
+    const normalizedEmail = normalizeEmail(authEmail)
+
+    if (authMode === 'register' && normalizedName.length < 2) {
+      setAuthError('El nombre debe tener al menos 2 caracteres.')
+      return
+    }
+    if (!isEmailValid(normalizedEmail)) {
+      setAuthError('Introduce un email valido.')
+      return
+    }
+    if (authPassword.length < 8) {
+      setAuthError('La contraseña debe tener al menos 8 caracteres.')
+      return
+    }
+    if (authMode === 'register' && authPassword !== authConfirmPassword) {
+      setAuthError('Las contraseñas no coinciden.')
+      return
+    }
+
+    setAuthError('')
+    setAuthLoading(true)
+
+    const attemptLocalAuth = async () => {
+      if (authMode === 'register') {
+        return registerLocalUser({
+          name: normalizedName,
+          email: normalizedEmail,
+          password: authPassword,
+        })
+      }
+
+      return loginLocalUser({ email: normalizedEmail, password: authPassword })
+    }
+
+    try {
+      let authenticatedUser = null
+      let apiHandled = false
+
+      try {
+        const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login'
+        const response = await fetch(apiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: normalizedName,
+            email: normalizedEmail,
+            password: authPassword,
+          }),
+        })
+
+        if (response.ok) {
+          const payload = await response.json()
+          authenticatedUser = sanitizeAuthUser({
+            ...payload.user,
+            provider: 'api',
+          })
+          saveAuthSession(authenticatedUser)
+          apiHandled = true
+        } else if (response.status === 404 || response.status === 503) {
+          authenticatedUser = await attemptLocalAuth()
+        } else {
+          const authApiError = await formatApiError(
+            response,
+            authMode === 'register'
+              ? 'No se pudo completar el registro.'
+              : 'No se pudo iniciar sesion.',
+          )
+          const nonFallbackError = new Error(authApiError)
+          nonFallbackError.disableFallback = true
+          throw nonFallbackError
+        }
+      } catch (networkError) {
+        if (networkError?.disableFallback) {
+          throw networkError
+        }
+        if (apiHandled) {
+          throw networkError
+        }
+        authenticatedUser = await attemptLocalAuth()
+      }
+
+      setCurrentUser(authenticatedUser)
+      setAuthNotice(
+        authMode === 'register'
+          ? `Registro completado. Bienvenido/a ${authenticatedUser.name}.`
+          : `Sesion iniciada. Hola ${authenticatedUser.name}.`,
+      )
+      resetAuthForm()
+      closeAuthModal()
+    } catch (error) {
+      setAuthError(error.message || 'No se pudo completar la autenticacion.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -1392,10 +1687,10 @@ function App() {
     setPaymentNotice('')
     setCheckoutLoadingPlanId(plan.id)
 
-    if (!STRIPE_API_BASE_URL) {
+    if (!API_BASE_URL) {
       if (!directPaymentLink) {
         setPaymentError(
-          'Checkout no disponible: configura VITE_STRIPE_API_BASE_URL o enlaces directos de Stripe.',
+          'Checkout no disponible: configura VITE_API_BASE_URL o enlaces directos de Stripe.',
         )
         setCheckoutLoadingPlanId('')
         return
@@ -1491,9 +1786,18 @@ function App() {
           </nav>
 
           <div className="header-actions">
-            <button className="btn btn-dark" type="button">
-              Iniciar sesion
-            </button>
+            {currentUser ? (
+              <>
+                <span className="auth-chip">{currentUser.name}</span>
+                <button className="btn btn-outline-dark" type="button" onClick={handleLogout}>
+                  Cerrar sesion
+                </button>
+              </>
+            ) : (
+              <button className="btn btn-dark" type="button" onClick={() => openAuthModal('register')}>
+                Crear cuenta
+              </button>
+            )}
             <button
               className="menu-btn"
               type="button"
@@ -1515,9 +1819,36 @@ function App() {
             <button type="button" onClick={() => jumpTo('precios')}>
               Precios
             </button>
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={() => {
+                  handleLogout()
+                  setMobileMenuOpen(false)
+                }}
+              >
+                Cerrar sesion
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  openAuthModal('register')
+                  setMobileMenuOpen(false)
+                }}
+              >
+                Crear cuenta
+              </button>
+            )}
           </div>
         ) : null}
       </header>
+
+      {authNotice ? (
+        <div className="container">
+          <p className="auth-global-notice">{authNotice}</p>
+        </div>
+      ) : null}
 
       <section className="hero">
         <div className="container hero-content">
@@ -2062,6 +2393,119 @@ function App() {
           </div>
         </div>
       </section>
+
+      {authModalOpen ? (
+        <div
+          className="auth-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAuthModal()
+            }
+          }}
+        >
+          <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Autenticacion">
+            <div className="auth-modal-head">
+              <h3>{authMode === 'register' ? 'Alta de usuario' : 'Iniciar sesion'}</h3>
+              <button
+                type="button"
+                className="auth-modal-close"
+                aria-label="Cerrar autenticacion"
+                onClick={closeAuthModal}
+              >
+                x
+              </button>
+            </div>
+
+            <div className="auth-mode-switch">
+              <button
+                type="button"
+                className={authMode === 'register' ? 'auth-mode-btn active' : 'auth-mode-btn'}
+                onClick={() => switchAuthMode('register')}
+              >
+                Registro
+              </button>
+              <button
+                type="button"
+                className={authMode === 'login' ? 'auth-mode-btn active' : 'auth-mode-btn'}
+                onClick={() => switchAuthMode('login')}
+              >
+                Acceso
+              </button>
+            </div>
+
+            <form className="auth-form" onSubmit={submitAuth}>
+              {authMode === 'register' ? (
+                <label className="auth-field">
+                  Nombre
+                  <input
+                    type="text"
+                    value={authName}
+                    onChange={(event) => setAuthName(event.target.value)}
+                    placeholder="Tu nombre"
+                    autoComplete="name"
+                    required
+                  />
+                </label>
+              ) : null}
+
+              <label className="auth-field">
+                Email
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  placeholder="correo@empresa.com"
+                  autoComplete="email"
+                  required
+                />
+              </label>
+
+              <label className="auth-field">
+                Contraseña
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(event) => setAuthPassword(event.target.value)}
+                  placeholder="Minimo 8 caracteres"
+                  autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                  required
+                />
+              </label>
+
+              {authMode === 'register' ? (
+                <label className="auth-field">
+                  Confirmar contraseña
+                  <input
+                    type="password"
+                    value={authConfirmPassword}
+                    onChange={(event) => setAuthConfirmPassword(event.target.value)}
+                    placeholder="Repite la contraseña"
+                    autoComplete="new-password"
+                    required
+                  />
+                </label>
+              ) : null}
+
+              <button className="btn btn-primary full-width" type="submit" disabled={authLoading}>
+                {authLoading
+                  ? authMode === 'register'
+                    ? 'Creando cuenta...'
+                    : 'Iniciando sesion...'
+                  : authMode === 'register'
+                    ? 'Crear cuenta'
+                    : 'Entrar'}
+              </button>
+            </form>
+
+            {authError ? <p className="auth-error">{authError}</p> : null}
+            <p className="auth-note">
+              Tus datos se guardan en backend cuando esta disponible. Si no, se usa modo local
+              para que puedas seguir probando.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <footer className="site-footer">
         <div className="container footer-grid">
