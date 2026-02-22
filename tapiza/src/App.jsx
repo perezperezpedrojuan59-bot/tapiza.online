@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
+import { FROCA_FABRICS } from '../shared/frocaFabrics.js'
 import './App.css'
 
 const assetUrl = (path) => {
@@ -31,6 +32,54 @@ const loadImage = (source) =>
     image.src = source
   })
 
+const buildSmoothedLuminanceMap = (pixels, width, height, radius = 2) => {
+  const luminance = new Float32Array(width * height)
+
+  for (let i = 0; i < width * height; i += 1) {
+    const pixelOffset = i * 4
+    luminance[i] =
+      (0.299 * pixels[pixelOffset] +
+        0.587 * pixels[pixelOffset + 1] +
+        0.114 * pixels[pixelOffset + 2]) /
+      255
+  }
+
+  const horizontalBlur = new Float32Array(width * height)
+  const verticalBlur = new Float32Array(width * height)
+  const kernelDiameter = radius * 2 + 1
+
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * width
+    const prefix = new Float32Array(width + 1)
+
+    for (let x = 0; x < width; x += 1) {
+      prefix[x + 1] = prefix[x] + luminance[rowOffset + x]
+    }
+
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius)
+      const right = Math.min(width - 1, x + radius)
+      horizontalBlur[rowOffset + x] = (prefix[right + 1] - prefix[left]) / (right - left + 1)
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    const prefix = new Float32Array(height + 1)
+
+    for (let y = 0; y < height; y += 1) {
+      prefix[y + 1] = prefix[y] + horizontalBlur[y * width + x]
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      const top = Math.max(0, y - radius)
+      const bottom = Math.min(height - 1, y + radius)
+      verticalBlur[y * width + x] = (prefix[bottom + 1] - prefix[top]) / (bottom - top + 1)
+    }
+  }
+
+  return { map: verticalBlur, kernelDiameter }
+}
+
 const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
 
 const renderFabricPreview = async (furnitureId, fabricHex) => {
@@ -54,6 +103,12 @@ const renderFabricPreview = async (furnitureId, fabricHex) => {
   const outputImageData = baseContext.createImageData(width, height)
   const outputPixels = outputImageData.data
   const fabric = hexToRgb(fabricHex)
+  const { map: smoothLuminanceMap, kernelDiameter } = buildSmoothedLuminanceMap(
+    sourcePixels,
+    width,
+    height,
+  )
+  const smoothingStrength = 1 / Math.max(3, kernelDiameter)
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -69,25 +124,22 @@ const renderFabricPreview = async (furnitureId, fabricHex) => {
       const sourceRed = sourcePixels[index]
       const sourceGreen = sourcePixels[index + 1]
       const sourceBlue = sourcePixels[index + 2]
+      const smoothLuminance = smoothLuminanceMap[y * width + x]
 
-      const luminance = (0.299 * sourceRed + 0.587 * sourceGreen + 0.114 * sourceBlue) / 255
+      const weaveA = Math.sin((x + y * 0.35) * 0.034) * 0.03
+      const weaveB = Math.cos((y - x * 0.25) * 0.039) * 0.026
+      const weaveC = Math.sin(x * 0.011 + y * 0.014) * 0.018
+      const texture = clamp(1 + weaveA + weaveB + weaveC, 0.9, 1.1)
 
-      const weaveA = Math.sin(x * 0.085 + y * 0.028) * 0.065
-      const weaveB = Math.cos(y * 0.11 - x * 0.02) * 0.055
-      const pseudoNoiseSeed = Math.sin((x + 17) * 12.9898 + (y + 43) * 78.233) * 43758.5453
-      const pseudoNoise = pseudoNoiseSeed - Math.floor(pseudoNoiseSeed)
-      const grain = (pseudoNoise - 0.5) * 0.08
-      const texture = clamp(1 + weaveA + weaveB + grain, 0.74, 1.26)
-
-      const shading = 0.42 + luminance * 0.98
+      const shading = 0.5 + smoothLuminance * (0.82 + smoothingStrength * 0.08)
 
       const tintedRed = clamp(fabric.r * shading * texture)
       const tintedGreen = clamp(fabric.g * shading * texture)
       const tintedBlue = clamp(fabric.b * shading * texture)
 
-      outputPixels[index] = clamp(tintedRed * 0.8 + sourceRed * 0.2)
-      outputPixels[index + 1] = clamp(tintedGreen * 0.8 + sourceGreen * 0.2)
-      outputPixels[index + 2] = clamp(tintedBlue * 0.8 + sourceBlue * 0.2)
+      outputPixels[index] = clamp(tintedRed * 0.86 + sourceRed * 0.14)
+      outputPixels[index + 1] = clamp(tintedGreen * 0.86 + sourceGreen * 0.14)
+      outputPixels[index + 2] = clamp(tintedBlue * 0.86 + sourceBlue * 0.14)
       outputPixels[index + 3] = alpha
     }
   }
@@ -403,7 +455,7 @@ const SHAPES = [
   'Esquinero/L',
 ]
 
-const FABRICS = [
+const BASE_FABRICS = [
   {
     id: 'velvet-azul',
     name: 'Velvet Azul Noche',
@@ -453,6 +505,8 @@ const FABRICS = [
     color: '#B99E8C',
   },
 ]
+
+const FABRICS = [...BASE_FABRICS, ...FROCA_FABRICS]
 
 const PLANS = PLAN_DEFINITIONS
 
@@ -858,7 +912,21 @@ function App() {
                           setRenderStatus('')
                         }}
                       >
-                        <span style={{ backgroundColor: fabric.color }} />
+                        <span
+                          style={{
+                            backgroundColor: fabric.color,
+                            ...(fabric.swatch
+                              ? {
+                                  backgroundImage: `linear-gradient(rgba(255,255,255,0.12), rgba(255,255,255,0.12)), url(${assetUrl(
+                                    fabric.swatch,
+                                  )})`,
+                                  backgroundSize: 'cover',
+                                  backgroundPosition: 'center',
+                                  backgroundBlendMode: 'multiply',
+                                }
+                              : {}),
+                          }}
+                        />
                         <strong>{fabric.name}</strong>
                         <small>{fabric.family}</small>
                       </button>
