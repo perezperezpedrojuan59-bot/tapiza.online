@@ -47,7 +47,7 @@ python3 -m http.server 8080
 
 1. Carga foto o elige un ejemplo realista.
 2. Carga foto de la tela o elige una de las 34 ACANTO.
-3. Muestra el resultado y descarga.
+3. Pulsa **Ver resultado** y descarga.
 
 ## Notas tecnicas
 

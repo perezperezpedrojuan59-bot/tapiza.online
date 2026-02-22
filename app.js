@@ -9,6 +9,7 @@ const previewCanvas = document.getElementById("previewCanvas");
 const previewCtx = previewCanvas.getContext("2d", { willReadFrequently: true });
 const imageInput = document.getElementById("imageInput");
 const fabricImageInput = document.getElementById("fabricImageInput");
+const viewResultBtn = document.getElementById("viewResultBtn");
 const showOriginalInput = document.getElementById("showOriginal");
 const downloadBtn = document.getElementById("downloadBtn");
 const fabricGrid = document.getElementById("fabricGrid");
@@ -58,6 +59,15 @@ ensureSelectedFabricReady();
 function attachEvents() {
   imageInput.addEventListener("change", onFurnitureImagePicked);
   fabricImageInput.addEventListener("change", onFabricImagePicked);
+
+  viewResultBtn.addEventListener("click", () => {
+    if (!state.hasImage) {
+      return;
+    }
+    state.showOriginal = false;
+    showOriginalInput.checked = false;
+    renderPreview();
+  });
 
   showOriginalInput.addEventListener("change", () => {
     state.showOriginal = showOriginalInput.checked;
@@ -135,10 +145,11 @@ function loadImageIntoEditor(source, options = {}) {
     baseCtx.drawImage(img, 0, 0, fitted.width, fitted.height);
     state.baseImageData = baseCtx.getImageData(0, 0, fitted.width, fitted.height);
     state.hasImage = true;
-    state.showOriginal = false;
-    showOriginalInput.checked = false;
+    state.showOriginal = true;
+    showOriginalInput.checked = true;
     emptyState.classList.add("hidden");
     downloadBtn.disabled = false;
+    viewResultBtn.disabled = false;
     runAutoDetection();
     if (revokeObjectUrl) {
       URL.revokeObjectURL(source);
