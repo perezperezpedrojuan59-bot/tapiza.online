@@ -25,6 +25,24 @@ python3 -m http.server 8080
 
 y luego visita `http://localhost:8080`.
 
+## Probar en la ventana derecha de Cursor
+
+1. Abre la carpeta del proyecto (`/workspace`) en Cursor.
+2. Inicia un servidor local en terminal:
+
+```bash
+python3 -m http.server 8080
+```
+
+3. En Cursor, abre la vista de puertos/preview y abre `http://localhost:8080`.
+4. Fija ese preview en el panel derecho para probar la app mientras editas.
+
+## Publicacion automatica
+
+- El repo incluye un workflow en `.github/workflows/deploy-pages.yml`.
+- Cada push a la rama `cursor/tapicer-a-virtual-app-6bf8` despliega en GitHub Pages.
+- URL esperada del sitio: `https://perezperezpedrojuan59-bot.github.io/tapiza.online/`
+
 ## Flujo recomendado
 
 1. Carga foto.
