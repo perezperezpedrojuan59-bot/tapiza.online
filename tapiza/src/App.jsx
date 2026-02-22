@@ -744,13 +744,18 @@ function App() {
                   {selectedFurniture ? (
                     <>
                       <img
+                        className="preview-furniture-image"
                         src={assetUrl(selectedFurniture.image)}
                         alt={selectedFurniture.name}
                       />
                       {selectedFabric ? (
                         <div
                           className="fabric-overlay"
-                          style={{ backgroundColor: selectedFabric.color }}
+                          style={{
+                            backgroundColor: selectedFabric.color,
+                            maskImage: `url("${assetUrl(selectedFurniture.image)}")`,
+                            WebkitMaskImage: `url("${assetUrl(selectedFurniture.image)}")`,
+                          }}
                         />
                       ) : null}
                     </>

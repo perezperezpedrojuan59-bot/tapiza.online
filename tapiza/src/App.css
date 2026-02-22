@@ -561,17 +561,29 @@
   background: linear-gradient(145deg, #eef2f7, #dae2ed);
 }
 
-.preview-box img {
+.preview-furniture-image {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  z-index: 1;
+  filter: drop-shadow(0 8px 16px rgba(30, 58, 95, 0.2));
 }
 
 .fabric-overlay {
   position: absolute;
   inset: 0;
-  opacity: 0.5;
+  z-index: 2;
+  opacity: 0.72;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
   mix-blend-mode: multiply;
+  pointer-events: none;
 }
 
 .preview-placeholder {
