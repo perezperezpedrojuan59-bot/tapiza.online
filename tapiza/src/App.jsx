@@ -1878,53 +1878,57 @@ function App() {
     }
   }
 
-  const applyLocalPlan = (user, planId) => {
-    const localUser = readLocalUserByEmail(user.email) || normalizeStoredUser({ ...user, provider: 'local' })
-    localUser.planId = planId
-    const savedUser = upsertLocalUser(localUser)
-    const sanitized = sanitizeAuthUser({
-      ...savedUser,
-      provider: user.provider === 'api' ? 'api' : 'local',
-    })
-    setCurrentUser(sanitized)
-    saveAuthSession(sanitized)
-    setQuotaRevision((value) => value + 1)
-    return sanitized
-  }
-
-  const activatePlanForCurrentUser = async (planId) => {
-    if (!planId || planId === 'free') return false
-    const user = currentUser || readAuthSession()
-    if (!user?.email) return false
-
-    if (API_BASE_URL && user.provider === 'api') {
-      try {
-        const response = await fetch(apiUrl('/api/auth/activate-plan'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: user.email,
-            planId,
-          }),
-        })
-        const payload = await safeParseJson(response)
-        if (response.ok && payload?.user) {
-          applyAuthenticatedUser(payload.user, 'api')
-          return true
-        }
-      } catch {
-        return false
-      }
-    }
-
-    applyLocalPlan(user, planId)
-    return true
-  }
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const checkoutStatus = params.get('checkout')
     if (!checkoutStatus) return
+
+    const applyLocalPlan = (user, planId) => {
+      const localUser =
+        readLocalUserByEmail(user.email) || normalizeStoredUser({ ...user, provider: 'local' })
+      localUser.planId = planId
+      const savedUser = upsertLocalUser(localUser)
+      const sanitized = sanitizeAuthUser({
+        ...savedUser,
+        provider: user.provider === 'api' ? 'api' : 'local',
+      })
+      setCurrentUser(sanitized)
+      saveAuthSession(sanitized)
+      setQuotaRevision((value) => value + 1)
+      return sanitized
+    }
+
+    const activatePlanForCurrentUser = async (planId) => {
+      if (!planId || planId === 'free') return false
+      const user = readAuthSession()
+      if (!user?.email) return false
+
+      if (API_BASE_URL && user.provider === 'api') {
+        try {
+          const response = await fetch(apiUrl('/api/auth/activate-plan'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: user.email,
+              planId,
+            }),
+          })
+          const payload = await safeParseJson(response)
+          if (response.ok && payload?.user) {
+            const sanitized = sanitizeAuthUser({ ...payload.user, provider: 'api' })
+            setCurrentUser(sanitized)
+            saveAuthSession(sanitized)
+            setQuotaRevision((value) => value + 1)
+            return true
+          }
+        } catch {
+          return false
+        }
+      }
+
+      applyLocalPlan(user, planId)
+      return true
+    }
 
     const syncCheckoutState = async () => {
       if (checkoutStatus === 'success') {
@@ -2348,7 +2352,10 @@ function App() {
   }
 
   const accountSnapshot = useMemo(
-    () => getUserQuotaSnapshot(currentUser),
+    () => {
+      void quotaRevision
+      return getUserQuotaSnapshot(currentUser)
+    },
     [currentUser, quotaRevision],
   )
 
