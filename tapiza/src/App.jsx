@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react'
 import './App.css'
 
+const assetUrl = (path) => {
+  const cleanPath = String(path).replace(/^\/+/, '')
+  return `${import.meta.env.BASE_URL}${cleanPath}`
+}
+
 const FURNITURE = [
   {
     id: 'sofa-1plaza',
@@ -492,7 +497,7 @@ function App() {
       <header className="top-header">
         <div className="container header-inner">
           <div className="brand">
-            <img src="/images/logo.png" alt="Tapiza.online" />
+            <img src={assetUrl('/images/logo.png')} alt="Tapiza.online" />
             <span>Tapiza.online</span>
           </div>
 
@@ -681,7 +686,7 @@ function App() {
                         }}
                       >
                         <div className="furniture-image">
-                          <img src={item.image} alt={item.name} loading="lazy" />
+                          <img src={assetUrl(item.image)} alt={item.name} loading="lazy" />
                         </div>
                         <h4>{item.name}</h4>
                         <div className="mini-badges">
@@ -738,7 +743,10 @@ function App() {
                 <div className="preview-box">
                   {selectedFurniture ? (
                     <>
-                      <img src={selectedFurniture.image} alt={selectedFurniture.name} />
+                      <img
+                        src={assetUrl(selectedFurniture.image)}
+                        alt={selectedFurniture.name}
+                      />
                       {selectedFabric ? (
                         <div
                           className="fabric-overlay"
@@ -868,7 +876,7 @@ function App() {
         <div className="container footer-grid">
           <div>
             <div className="brand">
-              <img src="/images/logo.png" alt="Tapiza.online" />
+              <img src={assetUrl('/images/logo.png')} alt="Tapiza.online" />
               <span>Tapiza.online</span>
             </div>
             <p>
