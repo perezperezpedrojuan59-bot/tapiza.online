@@ -53,6 +53,11 @@ const fabrics = [
 
 const furnitureSamples = [
   { id: "cabecero", label: "Cabecero", src: "assets/samples/cabecero.jpg" },
+  {
+    id: "cabecero-capitone",
+    label: "Cabecero capitonado",
+    src: "assets/samples/cabecero-capitone.jpg",
+  },
   { id: "silla", label: "Silla", src: "assets/samples/silla.jpg" },
   { id: "sillon", label: "Sillon", src: "assets/samples/sillon.jpg" },
   { id: "sofa", label: "Sofa", src: "assets/samples/sofa.jpg" },

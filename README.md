@@ -5,7 +5,7 @@ App web para **tapizar virtualmente** muebles a partir de una foto.
 ## Que hace
 
 - Carga una imagen local (sofa, sillon, cabecera, etc.).
-- Incluye ejemplos realistas precargados: cabecero, silla, sillon, sofa y puff.
+- Incluye ejemplos realistas precargados: cabecero, cabecero capitonado, silla, sillon, sofa y puff.
 - Detecta automaticamente la zona tapizable del mueble.
 - Permite recalcular la deteccion con un control de sensibilidad.
 - Ofrece telas por color y por patron.
@@ -63,6 +63,7 @@ python3 -m http.server 8080
 Las fotos de muestra incluidas en `assets/samples/` provienen de Unsplash:
 
 - Cabecero: https://unsplash.com/photos/a-bed-with-a-fancy-headboard-in-a-bedroom-NNBnzeakKK0
+- Cabecero capitonado: https://sureste.dico.com.mx/recamara/cabecera-king-size-estela-beige-1.html
 - Silla: https://unsplash.com/photos/a-chair-and-a-table-in-a-room-al0srakHkkY
 - Sillon: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sillon-gris-london_sal38447s1-d-3.jpg
 - Sofa: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sofa-gris-london_sal38445s1-d-1.jpg
