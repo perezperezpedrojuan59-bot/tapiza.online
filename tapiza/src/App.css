@@ -515,6 +515,34 @@
   gap: 0.62rem;
 }
 
+.fabric-source-note {
+  margin: 0.55rem 0 0.8rem;
+  font-size: 0.84rem;
+  color: #4b5563;
+}
+
+.fabric-family-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.8rem;
+}
+
+.fabric-family-filter {
+  border: 1px solid #d6dce6;
+  background: #f6f8fb;
+  color: #334155;
+  border-radius: 999px;
+  padding: 0.33rem 0.62rem;
+  font-size: 0.78rem;
+}
+
+.fabric-family-filter.active {
+  border-color: var(--brand-gold);
+  background: #f7ead8;
+  color: #7a4e17;
+}
+
 .fabric-card {
   border: 1px solid #dde4ee;
   background: #fff;
@@ -544,6 +572,15 @@
 .fabric-card.active {
   border-color: var(--brand-gold);
   box-shadow: 0 0 0 2px rgba(212, 165, 116, 0.2);
+}
+
+.fabric-filter-warning {
+  margin-top: 0.75rem;
+  color: #9a3412;
+  background: #fff7ed;
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.82rem;
 }
 
 .preview-panel {

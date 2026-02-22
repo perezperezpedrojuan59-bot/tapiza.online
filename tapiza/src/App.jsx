@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
-import { FROCA_FABRICS } from '../shared/frocaFabrics.js'
+import { FROCA_FABRICS, FROCA_FABRIC_COUNTS } from '../shared/frocaFabrics.js'
 import './App.css'
 
 const assetUrl = (path) => {
@@ -24,13 +24,23 @@ const hexToRgb = (hexColor) => {
   }
 }
 
-const loadImage = (source) =>
-  new Promise((resolve, reject) => {
+const imageCache = new Map()
+const swatchTextureCache = new Map()
+
+const loadImage = (source) => {
+  const cached = imageCache.get(source)
+  if (cached) return cached
+
+  const promise = new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error(`Image load failed: ${source}`))
     image.src = source
   })
+
+  imageCache.set(source, promise)
+  return promise
+}
 
 const buildSmoothedLuminanceMap = (pixels, width, height, radius = 2) => {
   const luminance = new Float32Array(width * height)
@@ -80,9 +90,91 @@ const buildSmoothedLuminanceMap = (pixels, width, height, radius = 2) => {
   return { map: verticalBlur, kernelDiameter }
 }
 
+const wrapCoordinate = (value, size) => {
+  const wrapped = value % size
+  return wrapped < 0 ? wrapped + size : wrapped
+}
+
+const sampleBilinearRgb = (pixels, width, height, x, y) => {
+  const px = wrapCoordinate(x, width)
+  const py = wrapCoordinate(y, height)
+
+  const x0 = Math.floor(px)
+  const y0 = Math.floor(py)
+  const x1 = (x0 + 1) % width
+  const y1 = (y0 + 1) % height
+
+  const tx = px - x0
+  const ty = py - y0
+
+  const topLeft = (y0 * width + x0) * 4
+  const topRight = (y0 * width + x1) * 4
+  const bottomLeft = (y1 * width + x0) * 4
+  const bottomRight = (y1 * width + x1) * 4
+
+  const topRed = pixels[topLeft] * (1 - tx) + pixels[topRight] * tx
+  const topGreen = pixels[topLeft + 1] * (1 - tx) + pixels[topRight + 1] * tx
+  const topBlue = pixels[topLeft + 2] * (1 - tx) + pixels[topRight + 2] * tx
+
+  const bottomRed = pixels[bottomLeft] * (1 - tx) + pixels[bottomRight] * tx
+  const bottomGreen = pixels[bottomLeft + 1] * (1 - tx) + pixels[bottomRight + 1] * tx
+  const bottomBlue = pixels[bottomLeft + 2] * (1 - tx) + pixels[bottomRight + 2] * tx
+
+  return {
+    r: topRed * (1 - ty) + bottomRed * ty,
+    g: topGreen * (1 - ty) + bottomGreen * ty,
+    b: topBlue * (1 - ty) + bottomBlue * ty,
+  }
+}
+
+const loadSwatchTexture = async (swatchPath) => {
+  const swatchUrl = assetUrl(swatchPath)
+  const cached = swatchTextureCache.get(swatchUrl)
+  if (cached) return cached
+
+  const texturePromise = (async () => {
+    const swatchImage = await loadImage(swatchUrl)
+    const sourceWidth = swatchImage.naturalWidth || swatchImage.width
+    const sourceHeight = swatchImage.naturalHeight || swatchImage.height
+
+    const cropX = Math.floor(sourceWidth * 0.12)
+    const cropY = Math.floor(sourceHeight * 0.12)
+    const cropWidth = Math.max(16, Math.floor(sourceWidth * 0.76))
+    const cropHeight = Math.max(16, Math.floor(sourceHeight * 0.76))
+
+    const textureCanvas = document.createElement('canvas')
+    textureCanvas.width = Math.min(320, cropWidth)
+    textureCanvas.height = Math.min(320, cropHeight)
+    const textureContext = textureCanvas.getContext('2d', { willReadFrequently: true })
+    if (!textureContext) return null
+
+    textureContext.imageSmoothingEnabled = true
+    textureContext.drawImage(
+      swatchImage,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      0,
+      0,
+      textureCanvas.width,
+      textureCanvas.height,
+    )
+
+    return {
+      width: textureCanvas.width,
+      height: textureCanvas.height,
+      pixels: textureContext.getImageData(0, 0, textureCanvas.width, textureCanvas.height).data,
+    }
+  })()
+
+  swatchTextureCache.set(swatchUrl, texturePromise)
+  return texturePromise
+}
+
 const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
 
-const renderFabricPreview = async (furnitureId, fabricHex) => {
+const renderFabricPreview = async (furnitureId, fabricSelection) => {
   const cutoutImage = await loadImage(cutoutPath(furnitureId))
 
   const width = cutoutImage.naturalWidth || cutoutImage.width
@@ -102,7 +194,8 @@ const renderFabricPreview = async (furnitureId, fabricHex) => {
 
   const outputImageData = baseContext.createImageData(width, height)
   const outputPixels = outputImageData.data
-  const fabric = hexToRgb(fabricHex)
+  const fabric = hexToRgb(fabricSelection.color)
+  const swatchTexture = fabricSelection.swatch ? await loadSwatchTexture(fabricSelection.swatch) : null
   const { map: smoothLuminanceMap, kernelDiameter } = buildSmoothedLuminanceMap(
     sourcePixels,
     width,
@@ -126,20 +219,51 @@ const renderFabricPreview = async (furnitureId, fabricHex) => {
       const sourceBlue = sourcePixels[index + 2]
       const smoothLuminance = smoothLuminanceMap[y * width + x]
 
-      const weaveA = Math.sin((x + y * 0.35) * 0.034) * 0.03
-      const weaveB = Math.cos((y - x * 0.25) * 0.039) * 0.026
-      const weaveC = Math.sin(x * 0.011 + y * 0.014) * 0.018
-      const texture = clamp(1 + weaveA + weaveB + weaveC, 0.9, 1.1)
+      let textureRed = fabric.r
+      let textureGreen = fabric.g
+      let textureBlue = fabric.b
+      let microRelief = 0
 
-      const shading = 0.5 + smoothLuminance * (0.82 + smoothingStrength * 0.08)
+      if (swatchTexture) {
+        const textureX = x * 0.17 + y * 0.035
+        const textureY = y * 0.17 - x * 0.028
+        const sample = sampleBilinearRgb(
+          swatchTexture.pixels,
+          swatchTexture.width,
+          swatchTexture.height,
+          textureX,
+          textureY,
+        )
 
-      const tintedRed = clamp(fabric.r * shading * texture)
-      const tintedGreen = clamp(fabric.g * shading * texture)
-      const tintedBlue = clamp(fabric.b * shading * texture)
+        textureRed = clamp(sample.r * 0.74 + fabric.r * 0.26)
+        textureGreen = clamp(sample.g * 0.74 + fabric.g * 0.26)
+        textureBlue = clamp(sample.b * 0.74 + fabric.b * 0.26)
 
-      outputPixels[index] = clamp(tintedRed * 0.86 + sourceRed * 0.14)
-      outputPixels[index + 1] = clamp(tintedGreen * 0.86 + sourceGreen * 0.14)
-      outputPixels[index + 2] = clamp(tintedBlue * 0.86 + sourceBlue * 0.14)
+        const sampleLuminance = (0.299 * sample.r + 0.587 * sample.g + 0.114 * sample.b) / 255
+        microRelief = (sampleLuminance - 0.5) * 0.22
+      } else {
+        const weaveA = Math.sin((x + y * 0.32) * 0.033) * 0.024
+        const weaveB = Math.cos((y - x * 0.22) * 0.037) * 0.02
+        const weaveC = Math.sin(x * 0.012 + y * 0.016) * 0.016
+        const proceduralTexture = clamp(1 + weaveA + weaveB + weaveC, 0.92, 1.08)
+        textureRed = clamp(fabric.r * proceduralTexture)
+        textureGreen = clamp(fabric.g * proceduralTexture)
+        textureBlue = clamp(fabric.b * proceduralTexture)
+      }
+
+      const shading = clamp(
+        0.44 + smoothLuminance * (0.9 + smoothingStrength * 0.04) + microRelief,
+        0.22,
+        1.28,
+      )
+
+      const tintedRed = clamp(textureRed * shading)
+      const tintedGreen = clamp(textureGreen * shading)
+      const tintedBlue = clamp(textureBlue * shading)
+
+      outputPixels[index] = clamp(tintedRed * 0.9 + sourceRed * 0.1)
+      outputPixels[index + 1] = clamp(tintedGreen * 0.9 + sourceGreen * 0.1)
+      outputPixels[index + 2] = clamp(tintedBlue * 0.9 + sourceBlue * 0.1)
       outputPixels[index + 3] = alpha
     }
   }
@@ -148,11 +272,11 @@ const renderFabricPreview = async (furnitureId, fabricHex) => {
   baseContext.putImageData(outputImageData, 0, 0)
 
   baseContext.globalCompositeOperation = 'multiply'
-  baseContext.globalAlpha = 0.2
+  baseContext.globalAlpha = 0.16
   baseContext.drawImage(cutoutImage, 0, 0, width, height)
 
   baseContext.globalCompositeOperation = 'screen'
-  baseContext.globalAlpha = 0.1
+  baseContext.globalAlpha = 0.08
   baseContext.drawImage(cutoutImage, 0, 0, width, height)
 
   baseContext.globalCompositeOperation = 'source-over'
@@ -506,7 +630,7 @@ const BASE_FABRICS = [
   },
 ]
 
-const FABRICS = [...BASE_FABRICS, ...FROCA_FABRICS]
+const FABRICS = [...FROCA_FABRICS, ...BASE_FABRICS]
 
 const PLANS = PLAN_DEFINITIONS
 
@@ -526,8 +650,8 @@ const CATALOG_CARDS = [
   },
   {
     title: 'Telas Premium',
-    description: 'Velvet, lino, chenille y boucle de proveedores espanoles.',
-    counter: '25 telas',
+    description: 'Coleccion real de Froca y tejidos premium para tapiceria profesional.',
+    counter: `${FABRICS.length} telas`,
     variant: 'light',
   },
 ]
@@ -551,6 +675,7 @@ function App() {
   const [selectedShape, setSelectedShape] = useState('Todas las formas')
   const [selectedFurniture, setSelectedFurniture] = useState(null)
   const [selectedFabric, setSelectedFabric] = useState(null)
+  const [selectedFabricFamily, setSelectedFabricFamily] = useState('Todas')
   const [renderedPreviewSrc, setRenderedPreviewSrc] = useState('')
   const [isApplyingFabric, setIsApplyingFabric] = useState(false)
   const [renderError, setRenderError] = useState('')
@@ -594,6 +719,20 @@ function App() {
   )
 
   const selectedVisible = filteredFurniture.some((item) => item.id === selectedFurniture?.id)
+  const fabricFamilies = useMemo(
+    () => ['Todas', ...Array.from(new Set(FABRICS.map((fabric) => fabric.family)))],
+    [],
+  )
+  const visibleFabrics = useMemo(
+    () =>
+      selectedFabricFamily === 'Todas'
+        ? FABRICS
+        : FABRICS.filter((fabric) => fabric.family === selectedFabricFamily),
+    [selectedFabricFamily],
+  )
+  const selectedFabricVisible = selectedFabric
+    ? visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
+    : true
 
   const jumpTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
@@ -610,7 +749,7 @@ function App() {
     try {
       const renderedResult = await renderFabricPreview(
         selectedFurniture.id,
-        selectedFabric.color,
+        selectedFabric,
       )
       setRenderedPreviewSrc(renderedResult)
       setRenderStatus(
@@ -896,11 +1035,33 @@ function App() {
                 <div className="panel">
                   <div className="panel-head">
                     <h3>Biblioteca de telas</h3>
-                    <span className="badge">{FABRICS.length} seleccionadas</span>
+                    <span className="badge">{visibleFabrics.length} seleccionadas</span>
+                  </div>
+
+                  <p className="fabric-source-note">
+                    Froca ACANTO ({FROCA_FABRIC_COUNTS.acanto}) + BALENCIAGA (
+                    {FROCA_FABRIC_COUNTS.balenciaga}) ya integradas.
+                  </p>
+
+                  <div className="fabric-family-filters">
+                    {fabricFamilies.map((family) => (
+                      <button
+                        key={family}
+                        type="button"
+                        className={
+                          selectedFabricFamily === family
+                            ? 'fabric-family-filter active'
+                            : 'fabric-family-filter'
+                        }
+                        onClick={() => setSelectedFabricFamily(family)}
+                      >
+                        {family}
+                      </button>
+                    ))}
                   </div>
 
                   <div className="fabrics-grid">
-                    {FABRICS.map((fabric) => (
+                    {visibleFabrics.map((fabric) => (
                       <button
                         type="button"
                         key={fabric.id}
@@ -932,6 +1093,12 @@ function App() {
                       </button>
                     ))}
                   </div>
+
+                  {!selectedFabricVisible && selectedFabric ? (
+                    <p className="fabric-filter-warning">
+                      La tela seleccionada no coincide con el filtro actual de familia.
+                    </p>
+                  ) : null}
                 </div>
               )}
             </div>
