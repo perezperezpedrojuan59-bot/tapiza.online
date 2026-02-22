@@ -1203,47 +1203,51 @@ function App() {
       let authenticatedUser = null
       let apiHandled = false
 
-      try {
-        const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login'
-        const response = await fetch(apiUrl(endpoint), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: normalizedName,
-            email: normalizedEmail,
-            password: authPassword,
-          }),
-        })
-
-        if (response.ok) {
-          const payload = await response.json()
-          authenticatedUser = sanitizeAuthUser({
-            ...payload.user,
-            provider: 'api',
-          })
-          saveAuthSession(authenticatedUser)
-          apiHandled = true
-        } else if (response.status === 404 || response.status === 503) {
-          authenticatedUser = await attemptLocalAuth()
-        } else {
-          const authApiError = await formatApiError(
-            response,
-            authMode === 'register'
-              ? 'No se pudo completar el registro.'
-              : 'No se pudo iniciar sesion.',
-          )
-          const nonFallbackError = new Error(authApiError)
-          nonFallbackError.disableFallback = true
-          throw nonFallbackError
-        }
-      } catch (networkError) {
-        if (networkError?.disableFallback) {
-          throw networkError
-        }
-        if (apiHandled) {
-          throw networkError
-        }
+      if (!API_BASE_URL) {
         authenticatedUser = await attemptLocalAuth()
+      } else {
+        try {
+          const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login'
+          const response = await fetch(apiUrl(endpoint), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: normalizedName,
+              email: normalizedEmail,
+              password: authPassword,
+            }),
+          })
+
+          if (response.ok) {
+            const payload = await response.json()
+            authenticatedUser = sanitizeAuthUser({
+              ...payload.user,
+              provider: 'api',
+            })
+            saveAuthSession(authenticatedUser)
+            apiHandled = true
+          } else if (response.status === 404 || response.status === 503) {
+            authenticatedUser = await attemptLocalAuth()
+          } else {
+            const authApiError = await formatApiError(
+              response,
+              authMode === 'register'
+                ? 'No se pudo completar el registro.'
+                : 'No se pudo iniciar sesion.',
+            )
+            const nonFallbackError = new Error(authApiError)
+            nonFallbackError.disableFallback = true
+            throw nonFallbackError
+          }
+        } catch (networkError) {
+          if (networkError?.disableFallback) {
+            throw networkError
+          }
+          if (apiHandled) {
+            throw networkError
+          }
+          authenticatedUser = await attemptLocalAuth()
+        }
       }
 
       setCurrentUser(authenticatedUser)
