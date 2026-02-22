@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
 import { FROCA_FABRICS, FROCA_FABRIC_COUNTS } from '../shared/frocaFabrics.js'
 import { STRIPE_PAYMENT_LINKS } from '../shared/stripePaymentLinks.js'
@@ -179,7 +179,50 @@ const loadSwatchTexture = async (swatchPath) => {
 
 const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
 
-const renderFabricPreview = async (furnitureId, fabricSelection) => {
+const createDefaultUpholsteryMask = async (furnitureId) => {
+  const cutoutImage = await loadImage(cutoutPath(furnitureId))
+  const width = cutoutImage.naturalWidth || cutoutImage.width
+  const height = cutoutImage.naturalHeight || cutoutImage.height
+
+  const maskCanvas = document.createElement('canvas')
+  maskCanvas.width = width
+  maskCanvas.height = height
+  const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true })
+  if (!maskContext) {
+    throw new Error('No se pudo crear la mascara de tapizado.')
+  }
+
+  maskContext.drawImage(cutoutImage, 0, 0, width, height)
+  const imageData = maskContext.getImageData(0, 0, width, height)
+  const pixels = imageData.data
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3]
+    pixels[index] = 255
+    pixels[index + 1] = 255
+    pixels[index + 2] = 255
+    pixels[index + 3] = alpha
+  }
+
+  maskContext.putImageData(imageData, 0, 0)
+  return maskCanvas.toDataURL('image/png')
+}
+
+const loadMaskPixels = async (maskDataUrl, width, height) => {
+  if (!maskDataUrl) return null
+
+  const maskImage = await loadImage(maskDataUrl)
+  const maskCanvas = document.createElement('canvas')
+  maskCanvas.width = width
+  maskCanvas.height = height
+  const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true })
+  if (!maskContext) return null
+
+  maskContext.drawImage(maskImage, 0, 0, width, height)
+  return maskContext.getImageData(0, 0, width, height).data
+}
+
+const renderFabricPreview = async (furnitureId, fabricSelection, upholsteryMaskDataUrl = '') => {
   const cutoutImage = await loadImage(cutoutPath(furnitureId))
 
   const width = cutoutImage.naturalWidth || cutoutImage.width
@@ -201,6 +244,7 @@ const renderFabricPreview = async (furnitureId, fabricSelection) => {
   const outputPixels = outputImageData.data
   const fabric = hexToRgb(fabricSelection.color)
   const swatchTexture = fabricSelection.swatch ? await loadSwatchTexture(fabricSelection.swatch) : null
+  const maskPixels = await loadMaskPixels(upholsteryMaskDataUrl, width, height)
   const { map: smoothLuminanceMap, kernelDiameter } = buildSmoothedLuminanceMap(
     sourcePixels,
     width,
@@ -218,6 +262,16 @@ const renderFabricPreview = async (furnitureId, fabricSelection) => {
         outputPixels[index + 3] = 0
         continue
       }
+
+      const maskAlpha = maskPixels ? maskPixels[index + 3] : 255
+      if (maskAlpha <= 6) {
+        outputPixels[index] = sourcePixels[index]
+        outputPixels[index + 1] = sourcePixels[index + 1]
+        outputPixels[index + 2] = sourcePixels[index + 2]
+        outputPixels[index + 3] = alpha
+        continue
+      }
+      const maskFactor = maskAlpha / 255
 
       const sourceRed = sourcePixels[index]
       const sourceGreen = sourcePixels[index + 1]
@@ -266,9 +320,13 @@ const renderFabricPreview = async (furnitureId, fabricSelection) => {
       const tintedGreen = clamp(textureGreen * shading)
       const tintedBlue = clamp(textureBlue * shading)
 
-      outputPixels[index] = clamp(tintedRed * 0.9 + sourceRed * 0.1)
-      outputPixels[index + 1] = clamp(tintedGreen * 0.9 + sourceGreen * 0.1)
-      outputPixels[index + 2] = clamp(tintedBlue * 0.9 + sourceBlue * 0.1)
+      const mixedRed = clamp(tintedRed * 0.9 + sourceRed * 0.1)
+      const mixedGreen = clamp(tintedGreen * 0.9 + sourceGreen * 0.1)
+      const mixedBlue = clamp(tintedBlue * 0.9 + sourceBlue * 0.1)
+
+      outputPixels[index] = clamp(mixedRed * maskFactor + sourceRed * (1 - maskFactor))
+      outputPixels[index + 1] = clamp(mixedGreen * maskFactor + sourceGreen * (1 - maskFactor))
+      outputPixels[index + 2] = clamp(mixedBlue * maskFactor + sourceBlue * (1 - maskFactor))
       outputPixels[index + 3] = alpha
     }
   }
@@ -689,6 +747,21 @@ function App() {
   const [paymentNotice, setPaymentNotice] = useState('')
   const [paymentError, setPaymentError] = useState('')
   const [checkoutLoadingPlanId, setCheckoutLoadingPlanId] = useState('')
+  const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false)
+  const [maskEditorBusy, setMaskEditorBusy] = useState(false)
+  const [maskEditorError, setMaskEditorError] = useState('')
+  const [maskBrushMode, setMaskBrushMode] = useState('erase')
+  const [maskBrushSize, setMaskBrushSize] = useState(22)
+  const [maskEditorRevision, setMaskEditorRevision] = useState(0)
+  const [isSavingMask, setIsSavingMask] = useState(false)
+
+  const upholsteryMaskByFurnitureRef = useRef(new Map())
+  const maskEditorCanvasRef = useRef(null)
+  const maskEditorMaskCanvasRef = useRef(null)
+  const maskEditorOverlayCanvasRef = useRef(null)
+  const maskEditorImageRef = useRef(null)
+  const maskEditorDrawingRef = useRef(false)
+  const maskEditorLastPointRef = useRef(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -739,6 +812,224 @@ function App() {
     ? visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
     : true
 
+  const ensureUpholsteryMask = async (furnitureId) => {
+    const cachedMask = upholsteryMaskByFurnitureRef.current.get(furnitureId)
+    if (cachedMask) return cachedMask
+
+    const generatedMask = await createDefaultUpholsteryMask(furnitureId)
+    upholsteryMaskByFurnitureRef.current.set(furnitureId, generatedMask)
+    return generatedMask
+  }
+
+  const drawMaskEditorCanvas = () => {
+    const previewCanvas = maskEditorCanvasRef.current
+    const baseImage = maskEditorImageRef.current
+    const maskCanvas = maskEditorMaskCanvasRef.current
+    const overlayCanvas = maskEditorOverlayCanvasRef.current
+
+    if (!previewCanvas || !baseImage || !maskCanvas || !overlayCanvas) return
+
+    const previewContext = previewCanvas.getContext('2d')
+    const overlayContext = overlayCanvas.getContext('2d')
+    if (!previewContext || !overlayContext) return
+
+    const width = previewCanvas.width
+    const height = previewCanvas.height
+
+    overlayContext.clearRect(0, 0, width, height)
+    overlayContext.drawImage(maskCanvas, 0, 0, width, height)
+    overlayContext.globalCompositeOperation = 'source-in'
+    overlayContext.fillStyle = '#0ea5e9'
+    overlayContext.fillRect(0, 0, width, height)
+    overlayContext.globalCompositeOperation = 'source-over'
+
+    previewContext.clearRect(0, 0, width, height)
+    previewContext.drawImage(baseImage, 0, 0, width, height)
+    previewContext.globalAlpha = 0.45
+    previewContext.drawImage(overlayCanvas, 0, 0, width, height)
+    previewContext.globalAlpha = 1
+  }
+
+  const getMaskEditorPoint = (event) => {
+    const canvas = maskEditorCanvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+
+    const rect = canvas.getBoundingClientRect()
+    const normalizedX = (event.clientX - rect.left) / rect.width
+    const normalizedY = (event.clientY - rect.top) / rect.height
+
+    return {
+      x: clamp(normalizedX * canvas.width, 0, canvas.width),
+      y: clamp(normalizedY * canvas.height, 0, canvas.height),
+    }
+  }
+
+  const paintMaskAtPoint = (x, y) => {
+    const maskCanvas = maskEditorMaskCanvasRef.current
+    if (!maskCanvas) return
+
+    const maskContext = maskCanvas.getContext('2d')
+    if (!maskContext) return
+
+    const previousPoint = maskEditorLastPointRef.current
+
+    maskContext.save()
+    maskContext.lineCap = 'round'
+    maskContext.lineJoin = 'round'
+    maskContext.lineWidth = maskBrushSize
+    maskContext.globalCompositeOperation = maskBrushMode === 'paint' ? 'source-over' : 'destination-out'
+    maskContext.strokeStyle = 'rgba(255, 255, 255, 1)'
+    maskContext.fillStyle = 'rgba(255, 255, 255, 1)'
+
+    if (previousPoint) {
+      maskContext.beginPath()
+      maskContext.moveTo(previousPoint.x, previousPoint.y)
+      maskContext.lineTo(x, y)
+      maskContext.stroke()
+    }
+
+    maskContext.beginPath()
+    maskContext.arc(x, y, maskBrushSize / 2, 0, Math.PI * 2)
+    maskContext.fill()
+    maskContext.restore()
+
+    maskEditorLastPointRef.current = { x, y }
+    drawMaskEditorCanvas()
+  }
+
+  const handleMaskPointerDown = (event) => {
+    if (maskEditorBusy) return
+
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    maskEditorDrawingRef.current = true
+    maskEditorLastPointRef.current = null
+
+    const { x, y } = getMaskEditorPoint(event)
+    paintMaskAtPoint(x, y)
+  }
+
+  const handleMaskPointerMove = (event) => {
+    if (!maskEditorDrawingRef.current) return
+
+    event.preventDefault()
+    const { x, y } = getMaskEditorPoint(event)
+    paintMaskAtPoint(x, y)
+  }
+
+  const stopMaskDrawing = (event) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    maskEditorDrawingRef.current = false
+    maskEditorLastPointRef.current = null
+  }
+
+  const saveMaskEditor = async () => {
+    if (!selectedFurniture || !maskEditorMaskCanvasRef.current) return
+
+    setIsSavingMask(true)
+    try {
+      const maskDataUrl = maskEditorMaskCanvasRef.current.toDataURL('image/png')
+      upholsteryMaskByFurnitureRef.current.set(selectedFurniture.id, maskDataUrl)
+      setRenderedPreviewSrc('')
+      setRenderError('')
+      setRenderStatus(
+        `Zona textil guardada para ${selectedFurniture.name}. Pulsa "Aplicar tela" para ver el resultado.`,
+      )
+      setIsMaskEditorOpen(false)
+    } finally {
+      setIsSavingMask(false)
+    }
+  }
+
+  const resetMaskEditor = async () => {
+    if (!selectedFurniture) return
+
+    setMaskEditorError('')
+    setMaskEditorBusy(true)
+    try {
+      const defaultMask = await createDefaultUpholsteryMask(selectedFurniture.id)
+      upholsteryMaskByFurnitureRef.current.set(selectedFurniture.id, defaultMask)
+      setRenderedPreviewSrc('')
+      setRenderStatus(
+        `Zona textil restablecida para ${selectedFurniture.name}. Ajusta de nuevo si lo necesitas.`,
+      )
+      setMaskEditorRevision((prev) => prev + 1)
+    } catch {
+      setMaskEditorError('No se pudo restablecer la zona textil.')
+    } finally {
+      setMaskEditorBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!isMaskEditorOpen || !selectedFurniture) return undefined
+
+    let cancelled = false
+
+    const setupMaskEditor = async () => {
+      setMaskEditorBusy(true)
+      setMaskEditorError('')
+
+      try {
+        const [cutoutImage, maskDataUrl] = await Promise.all([
+          loadImage(cutoutPath(selectedFurniture.id)),
+          ensureUpholsteryMask(selectedFurniture.id),
+        ])
+
+        const maskImage = await loadImage(maskDataUrl)
+        if (cancelled) return
+
+        const width = cutoutImage.naturalWidth || cutoutImage.width
+        const height = cutoutImage.naturalHeight || cutoutImage.height
+        const previewCanvas = maskEditorCanvasRef.current
+
+        if (!previewCanvas) return
+
+        previewCanvas.width = width
+        previewCanvas.height = height
+
+        const maskCanvas = document.createElement('canvas')
+        maskCanvas.width = width
+        maskCanvas.height = height
+        const maskContext = maskCanvas.getContext('2d')
+        if (!maskContext) {
+          throw new Error('No se pudo crear el editor de mascara.')
+        }
+        maskContext.drawImage(maskImage, 0, 0, width, height)
+
+        const overlayCanvas = document.createElement('canvas')
+        overlayCanvas.width = width
+        overlayCanvas.height = height
+
+        maskEditorImageRef.current = cutoutImage
+        maskEditorMaskCanvasRef.current = maskCanvas
+        maskEditorOverlayCanvasRef.current = overlayCanvas
+        maskEditorDrawingRef.current = false
+        maskEditorLastPointRef.current = null
+        drawMaskEditorCanvas()
+      } catch {
+        if (!cancelled) {
+          setMaskEditorError('No se pudo cargar el editor de zona textil.')
+        }
+      } finally {
+        if (!cancelled) {
+          setMaskEditorBusy(false)
+        }
+      }
+    }
+
+    setupMaskEditor()
+
+    return () => {
+      cancelled = true
+      maskEditorDrawingRef.current = false
+      maskEditorLastPointRef.current = null
+    }
+  }, [isMaskEditorOpen, selectedFurniture, maskEditorRevision])
+
   const jumpTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
     setMobileMenuOpen(false)
@@ -752,9 +1043,11 @@ function App() {
     setIsApplyingFabric(true)
 
     try {
+      const upholsteryMask = await ensureUpholsteryMask(selectedFurniture.id)
       const renderedResult = await renderFabricPreview(
         selectedFurniture.id,
         selectedFabric,
+        upholsteryMask,
       )
       setRenderedPreviewSrc(renderedResult)
       setRenderStatus(
@@ -1053,6 +1346,8 @@ function App() {
                           setRenderedPreviewSrc('')
                           setRenderError('')
                           setRenderStatus('')
+                          setIsMaskEditorOpen(false)
+                          setMaskEditorError('')
                         }}
                       >
                         <div className="furniture-image">
@@ -1183,6 +1478,105 @@ function App() {
                   <p className="filter-warning">
                     El mueble seleccionado no coincide con los filtros actuales.
                   </p>
+                ) : null}
+
+                {selectedFurniture ? (
+                  <div className="mask-editor-section">
+                    <button
+                      className="btn btn-outline-dark full-width"
+                      type="button"
+                      onClick={() => {
+                        setMaskEditorError('')
+                        setIsMaskEditorOpen((prev) => {
+                          if (!prev) {
+                            setMaskEditorRevision((value) => value + 1)
+                          }
+                          return !prev
+                        })
+                      }}
+                    >
+                      {isMaskEditorOpen ? 'Cerrar editor de zona textil' : 'Editar zona textil'}
+                    </button>
+                    <p className="mask-editor-help">
+                      Marca solo las zonas con tela para evitar tapizar patas, madera o partes
+                      exteriores.
+                    </p>
+
+                    {isMaskEditorOpen ? (
+                      <div className="mask-editor-card">
+                        <div className="mask-editor-toolbar">
+                          <div className="mask-editor-mode">
+                            <button
+                              type="button"
+                              className={maskBrushMode === 'paint' ? 'mask-mode-btn active' : 'mask-mode-btn'}
+                              onClick={() => setMaskBrushMode('paint')}
+                            >
+                              Pintar zona textil
+                            </button>
+                            <button
+                              type="button"
+                              className={maskBrushMode === 'erase' ? 'mask-mode-btn active' : 'mask-mode-btn'}
+                              onClick={() => setMaskBrushMode('erase')}
+                            >
+                              Quitar zona
+                            </button>
+                          </div>
+                          <label className="mask-size-control">
+                            Pincel: {maskBrushSize}px
+                            <input
+                              type="range"
+                              min="8"
+                              max="64"
+                              step="2"
+                              value={maskBrushSize}
+                              onChange={(event) =>
+                                setMaskBrushSize(Number.parseInt(event.target.value, 10))
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        {maskEditorBusy ? (
+                          <p className="mask-editor-info">Cargando editor de zona textil...</p>
+                        ) : null}
+                        {maskEditorError ? (
+                          <p className="mask-editor-error">{maskEditorError}</p>
+                        ) : null}
+
+                        <canvas
+                          ref={maskEditorCanvasRef}
+                          className="mask-editor-canvas"
+                          onPointerDown={handleMaskPointerDown}
+                          onPointerMove={handleMaskPointerMove}
+                          onPointerUp={stopMaskDrawing}
+                          onPointerCancel={stopMaskDrawing}
+                          onPointerLeave={stopMaskDrawing}
+                        />
+
+                        <div className="mask-editor-actions">
+                          <button
+                            type="button"
+                            className="btn btn-outline-dark"
+                            onClick={resetMaskEditor}
+                            disabled={maskEditorBusy || isSavingMask}
+                          >
+                            Restablecer zona
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={saveMaskEditor}
+                            disabled={maskEditorBusy || isSavingMask}
+                          >
+                            {isSavingMask ? 'Guardando...' : 'Guardar zona textil'}
+                          </button>
+                        </div>
+                        <p className="mask-editor-info">
+                          Azul = zona que recibira tela al aplicar el tejido.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : null}
 
                 <button

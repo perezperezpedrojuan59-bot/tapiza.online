@@ -653,6 +653,93 @@
   font-size: 0.8rem;
 }
 
+.mask-editor-section {
+  margin: 0 0 0.78rem;
+}
+
+.mask-editor-help {
+  margin: 0.45rem 0 0;
+  color: #64748b;
+  font-size: 0.79rem;
+}
+
+.mask-editor-card {
+  margin-top: 0.62rem;
+  border: 1px solid #dbe3ef;
+  border-radius: 0.78rem;
+  background: #f8fafc;
+  padding: 0.62rem;
+}
+
+.mask-editor-toolbar {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 0.58rem;
+}
+
+.mask-editor-mode {
+  display: flex;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+.mask-mode-btn {
+  border: 1px solid #ccd6e3;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.76rem;
+}
+
+.mask-mode-btn.active {
+  border-color: #0ea5e9;
+  color: #0c4a6e;
+  background: #e0f2fe;
+}
+
+.mask-size-control {
+  display: grid;
+  gap: 0.3rem;
+  color: #334155;
+  font-size: 0.78rem;
+}
+
+.mask-size-control input {
+  width: 100%;
+}
+
+.mask-editor-canvas {
+  width: 100%;
+  border-radius: 0.64rem;
+  border: 1px solid #cfd9e8;
+  background: linear-gradient(145deg, #eef2f7, #dae2ed);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.mask-editor-actions {
+  margin-top: 0.58rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mask-editor-info {
+  margin: 0.58rem 0 0;
+  color: #0f172a;
+  font-size: 0.76rem;
+}
+
+.mask-editor-error {
+  margin: 0.58rem 0 0;
+  color: #991b1b;
+  background: #fee2e2;
+  border-radius: 0.55rem;
+  padding: 0.45rem 0.54rem;
+  font-size: 0.78rem;
+}
+
 .render-status {
   margin: 0.75rem 0 0;
   color: #14532d;
