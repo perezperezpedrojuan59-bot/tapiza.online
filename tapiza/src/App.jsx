@@ -642,7 +642,7 @@ function App() {
   }
 
   const year = new Date().getFullYear()
-  const canApply = Boolean(selectedFurniture && selectedFabric && selectedMask)
+  const canApply = Boolean(selectedFurniture && selectedFabric)
 
   return (
     <div className="app-shell">
@@ -900,13 +900,17 @@ function App() {
                         src={assetUrl(selectedFurniture.image)}
                         alt={selectedFurniture.name}
                       />
-                      {selectedFabric && selectedMask ? (
+                      {selectedFabric ? (
                         <div
                           className="fabric-overlay"
                           style={{
                             backgroundColor: selectedFabric.color,
-                            maskImage: `url("${selectedMask}")`,
-                            WebkitMaskImage: `url("${selectedMask}")`,
+                            ...(selectedMask
+                              ? {
+                                  maskImage: `url("${selectedMask}")`,
+                                  WebkitMaskImage: `url("${selectedMask}")`,
+                                }
+                              : {}),
                           }}
                         />
                       ) : null}
@@ -943,10 +947,6 @@ function App() {
                 >
                   Aplicar tela
                 </button>
-
-                {selectedFurniture && selectedFabric && !selectedMask ? (
-                  <p className="mask-status">Preparando zona de tapizado...</p>
-                ) : null}
 
                 {renderStatus ? <p className="render-status">{renderStatus}</p> : null}
               </div>

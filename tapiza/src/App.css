@@ -575,14 +575,14 @@
   position: absolute;
   inset: 0;
   z-index: 2;
-  opacity: 0.72;
+  opacity: 0.58;
   mask-size: contain;
   mask-repeat: no-repeat;
   mask-position: center;
   -webkit-mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
-  mix-blend-mode: multiply;
+  mix-blend-mode: overlay;
   pointer-events: none;
 }
 
@@ -635,15 +635,6 @@
   margin: 0.75rem 0 0;
   color: #14532d;
   background: #dcfce7;
-  border-radius: 0.6rem;
-  padding: 0.56rem 0.62rem;
-  font-size: 0.81rem;
-}
-
-.mask-status {
-  margin: 0.75rem 0 0;
-  color: #374151;
-  background: #f3f4f6;
   border-radius: 0.6rem;
   padding: 0.56rem 0.62rem;
   font-size: 0.81rem;
