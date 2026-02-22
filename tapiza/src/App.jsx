@@ -1,10 +1,139 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const assetUrl = (path) => {
   const cleanPath = String(path).replace(/^\/+/, '')
   return `${import.meta.env.BASE_URL}${cleanPath}`
 }
+
+const createFurnitureMask = (imageSrc) =>
+  new Promise((resolve) => {
+    if (typeof window === 'undefined') {
+      resolve(null)
+      return
+    }
+
+    const image = new Image()
+
+    image.onload = () => {
+      const width = image.naturalWidth
+      const height = image.naturalHeight
+
+      if (!width || !height) {
+        resolve(null)
+        return
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) {
+        resolve(null)
+        return
+      }
+
+      context.drawImage(image, 0, 0, width, height)
+      const imageData = context.getImageData(0, 0, width, height)
+      const pixels = imageData.data
+
+      const sampleStep = Math.max(1, Math.floor(Math.min(width, height) / 24))
+      let sampleRed = 0
+      let sampleGreen = 0
+      let sampleBlue = 0
+      let sampleCount = 0
+
+      const readPixel = (x, y) => {
+        const pixelIndex = (y * width + x) * 4
+        return [
+          pixels[pixelIndex],
+          pixels[pixelIndex + 1],
+          pixels[pixelIndex + 2],
+        ]
+      }
+
+      for (let x = 0; x < width; x += sampleStep) {
+        const top = readPixel(x, 0)
+        const bottom = readPixel(x, height - 1)
+        sampleRed += top[0] + bottom[0]
+        sampleGreen += top[1] + bottom[1]
+        sampleBlue += top[2] + bottom[2]
+        sampleCount += 2
+      }
+
+      for (let y = sampleStep; y < height - sampleStep; y += sampleStep) {
+        const left = readPixel(0, y)
+        const right = readPixel(width - 1, y)
+        sampleRed += left[0] + right[0]
+        sampleGreen += left[1] + right[1]
+        sampleBlue += left[2] + right[2]
+        sampleCount += 2
+      }
+
+      const backgroundRed = sampleRed / sampleCount
+      const backgroundGreen = sampleGreen / sampleCount
+      const backgroundBlue = sampleBlue / sampleCount
+
+      const alphaMask = new Uint8ClampedArray(width * height)
+
+      for (let pixel = 0; pixel < width * height; pixel += 1) {
+        const sourceIndex = pixel * 4
+        const red = pixels[sourceIndex]
+        const green = pixels[sourceIndex + 1]
+        const blue = pixels[sourceIndex + 2]
+
+        const redDiff = red - backgroundRed
+        const greenDiff = green - backgroundGreen
+        const blueDiff = blue - backgroundBlue
+        const distance = Math.sqrt(
+          redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff,
+        )
+
+        const maxChannel = Math.max(red, green, blue)
+        const minChannel = Math.min(red, green, blue)
+        const saturation = maxChannel - minChannel
+        const luminance = (red + green + blue) / 3
+
+        const looksLikeBackground =
+          distance < 36 ||
+          (luminance > 228 && saturation < 14 && distance < 64)
+
+        alphaMask[pixel] = looksLikeBackground ? 0 : 255
+      }
+
+      for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+          const current = y * width + x
+          if (alphaMask[current] === 0) continue
+
+          const nearOpaque =
+            (alphaMask[current - 1] > 0 ? 1 : 0) +
+            (alphaMask[current + 1] > 0 ? 1 : 0) +
+            (alphaMask[current - width] > 0 ? 1 : 0) +
+            (alphaMask[current + width] > 0 ? 1 : 0)
+
+          if (nearOpaque <= 1) {
+            alphaMask[current] = 0
+          }
+        }
+      }
+
+      for (let pixel = 0; pixel < width * height; pixel += 1) {
+        const sourceIndex = pixel * 4
+        pixels[sourceIndex] = 255
+        pixels[sourceIndex + 1] = 255
+        pixels[sourceIndex + 2] = 255
+        pixels[sourceIndex + 3] = alphaMask[pixel]
+      }
+
+      context.putImageData(imageData, 0, 0)
+      resolve(canvas.toDataURL('image/png'))
+    }
+
+    image.onerror = () => resolve(null)
+    image.src = imageSrc
+  })
 
 const FURNITURE = [
   {
@@ -449,6 +578,7 @@ function App() {
   const [selectedShape, setSelectedShape] = useState('Todas las formas')
   const [selectedFurniture, setSelectedFurniture] = useState(null)
   const [selectedFabric, setSelectedFabric] = useState(null)
+  const [maskCache, setMaskCache] = useState({})
   const [annualBilling, setAnnualBilling] = useState(false)
   const [renderStatus, setRenderStatus] = useState('')
 
@@ -468,6 +598,28 @@ function App() {
   )
 
   const selectedVisible = filteredFurniture.some((item) => item.id === selectedFurniture?.id)
+  const selectedMask = selectedFurniture ? maskCache[selectedFurniture.id] : null
+
+  useEffect(() => {
+    if (!selectedFurniture || selectedMask) return
+
+    let isCancelled = false
+    const furnitureId = selectedFurniture.id
+    const source = assetUrl(selectedFurniture.image)
+
+    createFurnitureMask(source).then((maskDataUrl) => {
+      if (!maskDataUrl || isCancelled) return
+
+      setMaskCache((previousCache) => {
+        if (previousCache[furnitureId]) return previousCache
+        return { ...previousCache, [furnitureId]: maskDataUrl }
+      })
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [selectedFurniture, selectedMask])
 
   const jumpTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
@@ -490,7 +642,7 @@ function App() {
   }
 
   const year = new Date().getFullYear()
-  const canApply = Boolean(selectedFurniture && selectedFabric)
+  const canApply = Boolean(selectedFurniture && selectedFabric && selectedMask)
 
   return (
     <div className="app-shell">
@@ -748,13 +900,13 @@ function App() {
                         src={assetUrl(selectedFurniture.image)}
                         alt={selectedFurniture.name}
                       />
-                      {selectedFabric ? (
+                      {selectedFabric && selectedMask ? (
                         <div
                           className="fabric-overlay"
                           style={{
                             backgroundColor: selectedFabric.color,
-                            maskImage: `url("${assetUrl(selectedFurniture.image)}")`,
-                            WebkitMaskImage: `url("${assetUrl(selectedFurniture.image)}")`,
+                            maskImage: `url("${selectedMask}")`,
+                            WebkitMaskImage: `url("${selectedMask}")`,
                           }}
                         />
                       ) : null}
@@ -791,6 +943,10 @@ function App() {
                 >
                   Aplicar tela
                 </button>
+
+                {selectedFurniture && selectedFabric && !selectedMask ? (
+                  <p className="mask-status">Preparando zona de tapizado...</p>
+                ) : null}
 
                 {renderStatus ? <p className="render-status">{renderStatus}</p> : null}
               </div>
