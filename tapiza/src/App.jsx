@@ -699,58 +699,191 @@ const SHAPES = [
   'Esquinero/L',
 ]
 
+const BASE_MANUFACTURER_OPTIONS = [
+  'Todos los fabricantes',
+  'Froca',
+  'Aznar Textil',
+  'GB Grup',
+  'Tuva Textil',
+]
+
+const FABRIC_TYPE_OPTIONS = [
+  'Todos los tipos',
+  'Polipiel',
+  'Chenilla',
+  'Lino',
+  'Jacquard',
+  'Microfibra',
+  'Piel/Cuero',
+  'Velvet',
+  'Boucle',
+  'Algodon',
+  'Pana',
+]
+
+const FABRIC_COLOR_OPTIONS = [
+  'Todos los colores',
+  'Rojo',
+  'Azul',
+  'Verde',
+  'Amarillo',
+  'Naranja',
+  'Negro',
+  'Blanco',
+  'Gris',
+  'Marron',
+  'Beige',
+  'Morado',
+]
+
+const FABRIC_PATTERN_OPTIONS = [
+  'Todos los patrones',
+  'Liso',
+  'Cuadros',
+  'Rayas',
+  'Circulos',
+  'Rombos',
+  'Geometricos',
+  'Abstractos',
+  'Florales',
+]
+
+const rgbToHsv = ({ r, g, b }) => {
+  const red = r / 255
+  const green = g / 255
+  const blue = b / 255
+  const max = Math.max(red, green, blue)
+  const min = Math.min(red, green, blue)
+  const delta = max - min
+
+  let hue = 0
+  if (delta > 0) {
+    if (max === red) {
+      hue = ((green - blue) / delta) % 6
+    } else if (max === green) {
+      hue = (blue - red) / delta + 2
+    } else {
+      hue = (red - green) / delta + 4
+    }
+  }
+
+  const normalizedHue = Math.round((hue * 60 + 360) % 360)
+  const saturation = max === 0 ? 0 : delta / max
+  const value = max
+
+  return { h: normalizedHue, s: saturation, v: value }
+}
+
+const detectColorFamily = (hexColor) => {
+  const hsv = rgbToHsv(hexToRgb(hexColor))
+
+  if (hsv.v < 0.16) return 'Negro'
+  if (hsv.v > 0.92 && hsv.s < 0.12) return 'Blanco'
+  if (hsv.s < 0.12 && hsv.v < 0.78) return 'Gris'
+  if (hsv.s < 0.18 && hsv.v >= 0.78) return 'Beige'
+  if (hsv.h >= 15 && hsv.h < 52 && hsv.v < 0.72) return 'Marron'
+  if (hsv.h >= 345 || hsv.h < 15) return 'Rojo'
+  if (hsv.h < 42) return 'Naranja'
+  if (hsv.h < 65) return 'Amarillo'
+  if (hsv.h < 160) return 'Verde'
+  if (hsv.h < 255) return 'Azul'
+  if (hsv.h < 325) return 'Morado'
+  return 'Rojo'
+}
+
+const enrichFabric = (fabric, defaults = {}) => ({
+  ...fabric,
+  manufacturer: fabric.manufacturer || defaults.manufacturer || 'Froca',
+  fabricType: fabric.fabricType || defaults.fabricType || 'Chenilla',
+  pattern: fabric.pattern || defaults.pattern || 'Liso',
+  colorFamily: fabric.colorFamily || detectColorFamily(fabric.color),
+})
+
 const BASE_FABRICS = [
   {
     id: 'velvet-azul',
     name: 'Velvet Azul Noche',
     family: 'Velvet',
     color: '#1E3A5F',
+    manufacturer: 'GB Grup',
+    fabricType: 'Velvet',
+    pattern: 'Liso',
   },
   {
     id: 'chenille-arena',
     name: 'Chenille Arena',
     family: 'Chenille',
     color: '#D4A574',
+    manufacturer: 'Aznar Textil',
+    fabricType: 'Chenilla',
+    pattern: 'Cuadros',
   },
   {
     id: 'lino-crudo',
     name: 'Lino Crudo',
     family: 'Lino',
     color: '#DDD3C5',
+    manufacturer: 'GB Grup',
+    fabricType: 'Lino',
+    pattern: 'Rayas',
   },
   {
     id: 'boucle-perla',
     name: 'Boucle Perla',
     family: 'Boucle',
     color: '#E7E7E4',
+    manufacturer: 'Tuva Textil',
+    fabricType: 'Boucle',
+    pattern: 'Liso',
   },
   {
     id: 'microfibra-grafito',
     name: 'Microfibra Grafito',
     family: 'Microfibra',
     color: '#474747',
+    manufacturer: 'Aznar Textil',
+    fabricType: 'Microfibra',
+    pattern: 'Liso',
   },
   {
     id: 'jacquard-verde',
     name: 'Jacquard Verde Salvia',
     family: 'Jacquard',
     color: '#8C9B83',
+    manufacturer: 'GB Grup',
+    fabricType: 'Jacquard',
+    pattern: 'Geometricos',
   },
   {
     id: 'algodon-terracota',
     name: 'Algodon Terracota',
     family: 'Algodon',
     color: '#B66F52',
+    manufacturer: 'Tuva Textil',
+    fabricType: 'Algodon',
+    pattern: 'Florales',
   },
   {
     id: 'pana-nude',
     name: 'Pana Nude',
     family: 'Pana',
     color: '#B99E8C',
+    manufacturer: 'Aznar Textil',
+    fabricType: 'Pana',
+    pattern: 'Abstractos',
   },
 ]
 
-const FABRICS = [...FROCA_FABRICS, ...BASE_FABRICS]
+const FABRICS = [
+  ...FROCA_FABRICS.map((fabric) =>
+    enrichFabric(fabric, {
+      manufacturer: 'Froca',
+      fabricType: fabric.family === 'Froca Balenciaga' ? 'Jacquard' : 'Chenilla',
+      pattern: 'Liso',
+    }),
+  ),
+  ...BASE_FABRICS.map((fabric) => enrichFabric(fabric)),
+]
 
 const PLANS = PLAN_DEFINITIONS
 
@@ -795,7 +928,10 @@ function App() {
   const [selectedShape, setSelectedShape] = useState('Todas las formas')
   const [selectedFurniture, setSelectedFurniture] = useState(null)
   const [selectedFabric, setSelectedFabric] = useState(null)
-  const [selectedFabricFamily, setSelectedFabricFamily] = useState('Todas')
+  const [selectedManufacturer, setSelectedManufacturer] = useState('Todos los fabricantes')
+  const [selectedFabricType, setSelectedFabricType] = useState('Todos los tipos')
+  const [selectedColorFamily, setSelectedColorFamily] = useState('Todos los colores')
+  const [selectedPattern, setSelectedPattern] = useState('Todos los patrones')
   const [renderedPreviewSrc, setRenderedPreviewSrc] = useState('')
   const [isApplyingFabric, setIsApplyingFabric] = useState(false)
   const [renderError, setRenderError] = useState('')
@@ -856,16 +992,60 @@ function App() {
   )
 
   const selectedVisible = filteredFurniture.some((item) => item.id === selectedFurniture?.id)
-  const fabricFamilies = useMemo(
-    () => ['Todas', ...Array.from(new Set(FABRICS.map((fabric) => fabric.family)))],
-    [],
-  )
+  const manufacturerOptions = useMemo(() => {
+    const availableManufacturers = Array.from(
+      new Set(FABRICS.map((fabric) => fabric.manufacturer).filter(Boolean)),
+    ).sort((left, right) => left.localeCompare(right, 'es'))
+
+    return [
+      BASE_MANUFACTURER_OPTIONS[0],
+      ...Array.from(new Set([...BASE_MANUFACTURER_OPTIONS.slice(1), ...availableManufacturers])),
+    ]
+  }, [])
+
+  const fabricTypeOptions = useMemo(() => {
+    const availableTypes = Array.from(
+      new Set(FABRICS.map((fabric) => fabric.fabricType).filter(Boolean)),
+    ).sort((left, right) => left.localeCompare(right, 'es'))
+
+    return [FABRIC_TYPE_OPTIONS[0], ...Array.from(new Set([...FABRIC_TYPE_OPTIONS.slice(1), ...availableTypes]))]
+  }, [])
+
+  const colorOptions = useMemo(() => {
+    const availableColors = Array.from(
+      new Set(FABRICS.map((fabric) => fabric.colorFamily).filter(Boolean)),
+    ).sort((left, right) => left.localeCompare(right, 'es'))
+
+    return [FABRIC_COLOR_OPTIONS[0], ...Array.from(new Set([...FABRIC_COLOR_OPTIONS.slice(1), ...availableColors]))]
+  }, [])
+
+  const patternOptions = useMemo(() => {
+    const availablePatterns = Array.from(
+      new Set(FABRICS.map((fabric) => fabric.pattern).filter(Boolean)),
+    ).sort((left, right) => left.localeCompare(right, 'es'))
+
+    return [
+      FABRIC_PATTERN_OPTIONS[0],
+      ...Array.from(new Set([...FABRIC_PATTERN_OPTIONS.slice(1), ...availablePatterns])),
+    ]
+  }, [])
+
   const visibleFabrics = useMemo(
     () =>
-      selectedFabricFamily === 'Todas'
-        ? FABRICS
-        : FABRICS.filter((fabric) => fabric.family === selectedFabricFamily),
-    [selectedFabricFamily],
+      FABRICS.filter((fabric) => {
+        const manufacturerMatch =
+          selectedManufacturer === 'Todos los fabricantes' ||
+          fabric.manufacturer === selectedManufacturer
+        const typeMatch =
+          selectedFabricType === 'Todos los tipos' || fabric.fabricType === selectedFabricType
+        const colorMatch =
+          selectedColorFamily === 'Todos los colores' || fabric.colorFamily === selectedColorFamily
+        const patternMatch =
+          selectedPattern === 'Todos los patrones' || fabric.pattern === selectedPattern
+
+        return manufacturerMatch && typeMatch && colorMatch && patternMatch
+      }),
+    [selectedManufacturer, selectedFabricType, selectedColorFamily, selectedPattern],
   )
   const selectedFabricVisible = selectedFabric
     ? visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
@@ -1483,21 +1663,62 @@ function App() {
                     {FROCA_FABRIC_COUNTS.balenciaga}) ya integradas.
                   </p>
 
-                  <div className="fabric-family-filters">
-                    {fabricFamilies.map((family) => (
-                      <button
-                        key={family}
-                        type="button"
-                        className={
-                          selectedFabricFamily === family
-                            ? 'fabric-family-filter active'
-                            : 'fabric-family-filter'
-                        }
-                        onClick={() => setSelectedFabricFamily(family)}
+                  <div className="fabric-select-grid">
+                    <label className="fabric-select-field">
+                      Fabricante
+                      <select
+                        value={selectedManufacturer}
+                        onChange={(event) => setSelectedManufacturer(event.target.value)}
                       >
-                        {family}
-                      </button>
-                    ))}
+                        {manufacturerOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="fabric-select-field">
+                      Tipo de tela
+                      <select
+                        value={selectedFabricType}
+                        onChange={(event) => setSelectedFabricType(event.target.value)}
+                      >
+                        {fabricTypeOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="fabric-select-field">
+                      Color
+                      <select
+                        value={selectedColorFamily}
+                        onChange={(event) => setSelectedColorFamily(event.target.value)}
+                      >
+                        {colorOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="fabric-select-field">
+                      Patron
+                      <select
+                        value={selectedPattern}
+                        onChange={(event) => setSelectedPattern(event.target.value)}
+                      >
+                        {patternOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
 
                   <div className="fabrics-grid">
@@ -1529,14 +1750,22 @@ function App() {
                           }}
                         />
                         <strong>{fabric.name}</strong>
-                        <small>{fabric.family}</small>
+                        <small>
+                          {fabric.manufacturer} · {fabric.fabricType} · {fabric.pattern}
+                        </small>
                       </button>
                     ))}
                   </div>
 
                   {!selectedFabricVisible && selectedFabric ? (
                     <p className="fabric-filter-warning">
-                      La tela seleccionada no coincide con el filtro actual de familia.
+                      La tela seleccionada no coincide con los filtros actuales.
+                    </p>
+                  ) : null}
+
+                  {!visibleFabrics.length ? (
+                    <p className="fabric-filter-warning">
+                      No hay telas para la combinacion seleccionada. Ajusta los filtros.
                     </p>
                   ) : null}
                 </div>

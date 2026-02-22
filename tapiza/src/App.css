@@ -521,6 +521,29 @@
   color: #4b5563;
 }
 
+.fabric-select-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.82rem;
+}
+
+.fabric-select-field {
+  display: grid;
+  gap: 0.28rem;
+  color: #475569;
+  font-size: 0.79rem;
+}
+
+.fabric-select-field select {
+  border: 1px solid #d6deea;
+  border-radius: 0.58rem;
+  background: #fff;
+  color: var(--brand-primary);
+  padding: 0.45rem 0.55rem;
+  font-size: 0.82rem;
+}
+
 .fabric-family-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1146,6 +1169,10 @@
   }
 
   .fabrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fabric-select-grid {
     grid-template-columns: 1fr;
   }
 
