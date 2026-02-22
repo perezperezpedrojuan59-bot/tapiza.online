@@ -25,9 +25,30 @@ const getDirectPaymentLink = (planId, billingCycle) =>
 
 const AUTH_USERS_STORAGE_KEY = 'tapiza.localUsers.v1'
 const AUTH_SESSION_STORAGE_KEY = 'tapiza.authSession.v1'
+const AUTH_PENDING_PLAN_STORAGE_KEY = 'tapiza.pendingPlan.v1'
+const GUEST_RENDER_USAGE_KEY = 'tapiza.guestRenderUsage.v1'
+
+const TRIAL_DURATION_DAYS = 14
+const TRIAL_RENDER_LIMIT = 120
+const FREE_MONTHLY_RENDER_LIMIT = 5
+const GUEST_RENDER_LIMIT = 1
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const isEmailValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+const currentMonthPeriod = () => new Date().toISOString().slice(0, 7)
+const generateNumericCode = () => `${Math.floor(100000 + Math.random() * 900000)}`
+
+const trialEndIso = () => {
+  const date = new Date()
+  date.setDate(date.getDate() + TRIAL_DURATION_DAYS)
+  return date.toISOString()
+}
+
+const codeExpiryIso = (hours = 24) => {
+  const date = new Date()
+  date.setHours(date.getHours() + hours)
+  return date.toISOString()
+}
 
 const hashPasswordInBrowser = async (password) => {
   const normalizedPassword = String(password || '')
@@ -63,13 +84,98 @@ const writeLocalUsers = (users) => {
   window.localStorage.setItem(AUTH_USERS_STORAGE_KEY, JSON.stringify(users))
 }
 
-const sanitizeAuthUser = (user) => ({
-  id: user.id,
-  name: user.name,
-  email: normalizeEmail(user.email),
-  createdAt: user.createdAt || new Date().toISOString(),
-  provider: user.provider || 'local',
-})
+const normalizeStoredUser = (user) => {
+  const normalized = {
+    ...user,
+    id: user.id,
+    name: String(user.name || '').trim(),
+    email: normalizeEmail(user.email),
+    createdAt: user.createdAt || new Date().toISOString(),
+    provider: user.provider || 'local',
+    emailVerified: Boolean(user.emailVerified),
+    planId: user.planId || 'free',
+    trialStartedAt: user.trialStartedAt || null,
+    trialEndsAt: user.trialEndsAt || null,
+    trialRendersLimit: Number(user.trialRendersLimit || TRIAL_RENDER_LIMIT),
+    trialRendersUsed: Number(user.trialRendersUsed || 0),
+    freeMonthlyRendersLimit: Number(user.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT),
+    freeMonthlyRendersUsed: Number(user.freeMonthlyRendersUsed || 0),
+    freeMonthlyPeriod: user.freeMonthlyPeriod || currentMonthPeriod(),
+    verificationCode: user.verificationCode || '',
+    verificationExpiresAt: user.verificationExpiresAt || null,
+    resetCode: user.resetCode || '',
+    resetExpiresAt: user.resetExpiresAt || null,
+    passwordHash: user.passwordHash || '',
+  }
+
+  const period = currentMonthPeriod()
+  if (normalized.freeMonthlyPeriod !== period) {
+    normalized.freeMonthlyPeriod = period
+    normalized.freeMonthlyRendersUsed = 0
+  }
+
+  return normalized
+}
+
+const sanitizeAuthUser = (user) => {
+  const normalized = normalizeStoredUser(user)
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    email: normalized.email,
+    createdAt: normalized.createdAt,
+    provider: normalized.provider,
+    emailVerified: normalized.emailVerified,
+    planId: normalized.planId,
+    trialStartedAt: normalized.trialStartedAt,
+    trialEndsAt: normalized.trialEndsAt,
+    trialRendersLimit: normalized.trialRendersLimit,
+    trialRendersUsed: normalized.trialRendersUsed,
+    freeMonthlyRendersLimit: normalized.freeMonthlyRendersLimit,
+    freeMonthlyRendersUsed: normalized.freeMonthlyRendersUsed,
+    freeMonthlyPeriod: normalized.freeMonthlyPeriod,
+  }
+}
+
+const isTrialActive = (user) => {
+  if (!user?.trialEndsAt) return false
+  return new Date(user.trialEndsAt).getTime() > Date.now()
+}
+
+const withTrialIfEligible = (user) => {
+  const normalized = normalizeStoredUser(user)
+  if (!normalized.emailVerified) return normalized
+
+  if (!normalized.trialStartedAt) {
+    normalized.trialStartedAt = new Date().toISOString()
+    normalized.trialEndsAt = trialEndIso()
+    normalized.trialRendersLimit = TRIAL_RENDER_LIMIT
+    normalized.trialRendersUsed = 0
+  }
+
+  return normalized
+}
+
+const upsertLocalUser = (draftUser) => {
+  const normalizedDraft = normalizeStoredUser(draftUser)
+  const users = readLocalUsers().map((entry) => normalizeStoredUser(entry))
+  const index = users.findIndex((entry) => entry.email === normalizedDraft.email)
+
+  if (index >= 0) {
+    users[index] = normalizedDraft
+  } else {
+    users.push(normalizedDraft)
+  }
+
+  writeLocalUsers(users)
+  return normalizedDraft
+}
+
+const readLocalUserByEmail = (email) => {
+  const normalizedEmail = normalizeEmail(email)
+  const users = readLocalUsers().map((entry) => normalizeStoredUser(entry))
+  return users.find((entry) => entry.email === normalizedEmail) || null
+}
 
 const saveAuthSession = (user) => {
   if (typeof window === 'undefined' || !user) return
@@ -95,7 +201,7 @@ const clearAuthSession = () => {
 
 const registerLocalUser = async ({ name, email, password }) => {
   const normalizedEmail = normalizeEmail(email)
-  const users = readLocalUsers()
+  const users = readLocalUsers().map((entry) => normalizeStoredUser(entry))
 
   if (users.some((user) => normalizeEmail(user.email) === normalizedEmail)) {
     throw new Error('Ya existe una cuenta registrada con ese email.')
@@ -109,17 +215,33 @@ const registerLocalUser = async ({ name, email, password }) => {
     passwordHash,
     createdAt: new Date().toISOString(),
     provider: 'local',
+    emailVerified: false,
+    planId: 'free',
+    trialStartedAt: null,
+    trialEndsAt: null,
+    trialRendersLimit: TRIAL_RENDER_LIMIT,
+    trialRendersUsed: 0,
+    freeMonthlyRendersLimit: FREE_MONTHLY_RENDER_LIMIT,
+    freeMonthlyRendersUsed: 0,
+    freeMonthlyPeriod: currentMonthPeriod(),
+    verificationCode: generateNumericCode(),
+    verificationExpiresAt: codeExpiryIso(24),
+    resetCode: '',
+    resetExpiresAt: null,
   }
 
   users.push(user)
   writeLocalUsers(users)
   saveAuthSession(user)
-  return sanitizeAuthUser(user)
+  return {
+    user: sanitizeAuthUser(user),
+    verification: { required: true, code: user.verificationCode },
+  }
 }
 
 const loginLocalUser = async ({ email, password }) => {
   const normalizedEmail = normalizeEmail(email)
-  const users = readLocalUsers()
+  const users = readLocalUsers().map((entry) => normalizeStoredUser(entry))
   const existingUser = users.find((user) => normalizeEmail(user.email) === normalizedEmail)
 
   if (!existingUser) {
@@ -131,9 +253,290 @@ const loginLocalUser = async ({ email, password }) => {
     throw new Error('La contraseña es incorrecta.')
   }
 
-  const user = sanitizeAuthUser(existingUser)
-  saveAuthSession(user)
-  return user
+  saveAuthSession(existingUser)
+
+  if (!existingUser.emailVerified) {
+    const error = new Error('Debes verificar tu email antes de continuar.')
+    error.verificationRequired = true
+    error.email = existingUser.email
+    throw error
+  }
+
+  const verifiedUser = withTrialIfEligible(existingUser)
+  upsertLocalUser(verifiedUser)
+  saveAuthSession(verifiedUser)
+  return { user: sanitizeAuthUser(verifiedUser) }
+}
+
+const verifyLocalUserEmail = async ({ email, code }) => {
+  const existingUser = readLocalUserByEmail(email)
+  if (!existingUser) {
+    throw new Error('No existe una cuenta con ese email.')
+  }
+  if (existingUser.emailVerified) {
+    const alreadyVerified = withTrialIfEligible(existingUser)
+    upsertLocalUser(alreadyVerified)
+    saveAuthSession(alreadyVerified)
+    return { user: sanitizeAuthUser(alreadyVerified) }
+  }
+  if (!String(code || '').trim()) {
+    throw new Error('Introduce el código de verificación.')
+  }
+
+  const isExpired =
+    existingUser.verificationExpiresAt &&
+    new Date(existingUser.verificationExpiresAt).getTime() < Date.now()
+
+  if (isExpired) {
+    throw new Error('El código ha expirado. Solicita uno nuevo.')
+  }
+  if (String(code || '').trim() !== String(existingUser.verificationCode || '').trim()) {
+    throw new Error('El código de verificación no es válido.')
+  }
+
+  existingUser.emailVerified = true
+  existingUser.verificationCode = ''
+  existingUser.verificationExpiresAt = null
+
+  const verifiedUser = withTrialIfEligible(existingUser)
+  upsertLocalUser(verifiedUser)
+  saveAuthSession(verifiedUser)
+  return { user: sanitizeAuthUser(verifiedUser) }
+}
+
+const resendLocalVerificationCode = async ({ email }) => {
+  const existingUser = readLocalUserByEmail(email)
+  if (!existingUser) {
+    throw new Error('No existe una cuenta con ese email.')
+  }
+  if (existingUser.emailVerified) {
+    return {
+      message: 'Ese email ya está verificado.',
+      verification: { required: false },
+    }
+  }
+
+  const newCode = generateNumericCode()
+  existingUser.verificationCode = newCode
+  existingUser.verificationExpiresAt = codeExpiryIso(24)
+  upsertLocalUser(existingUser)
+  return {
+    message: 'Código de verificación reenviado.',
+    verification: { required: true, code: newCode },
+  }
+}
+
+const requestLocalPasswordReset = async ({ email }) => {
+  const existingUser = readLocalUserByEmail(email)
+  if (!existingUser) {
+    throw new Error('No existe una cuenta con ese email.')
+  }
+
+  const resetCode = generateNumericCode()
+  const resetExpiry = new Date()
+  resetExpiry.setMinutes(resetExpiry.getMinutes() + 30)
+
+  existingUser.resetCode = resetCode
+  existingUser.resetExpiresAt = resetExpiry.toISOString()
+  upsertLocalUser(existingUser)
+
+  return {
+    message: 'Código de recuperación enviado.',
+    reset: { code: resetCode },
+  }
+}
+
+const resetLocalPassword = async ({ email, code, newPassword }) => {
+  const existingUser = readLocalUserByEmail(email)
+  if (!existingUser) {
+    throw new Error('No existe una cuenta con ese email.')
+  }
+  if (!String(code || '').trim()) {
+    throw new Error('Introduce el código de recuperación.')
+  }
+  const isExpired =
+    existingUser.resetExpiresAt && new Date(existingUser.resetExpiresAt).getTime() < Date.now()
+  if (isExpired) {
+    throw new Error('El código de recuperación ha expirado.')
+  }
+  if (String(code || '').trim() !== String(existingUser.resetCode || '').trim()) {
+    throw new Error('El código de recuperación no es válido.')
+  }
+  if (String(newPassword || '').length < 8) {
+    throw new Error('La nueva contraseña debe tener al menos 8 caracteres.')
+  }
+
+  existingUser.passwordHash = await hashPasswordInBrowser(newPassword)
+  existingUser.resetCode = ''
+  existingUser.resetExpiresAt = null
+  upsertLocalUser(existingUser)
+
+  return { message: 'Contraseña actualizada correctamente.' }
+}
+
+const savePendingPlan = (value) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(AUTH_PENDING_PLAN_STORAGE_KEY, JSON.stringify(value))
+}
+
+const readPendingPlan = () => {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(AUTH_PENDING_PLAN_STORAGE_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+const clearPendingPlan = () => {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem(AUTH_PENDING_PLAN_STORAGE_KEY)
+}
+
+const readGuestRenderUsage = () => {
+  if (typeof window === 'undefined') return 0
+  try {
+    return Number.parseInt(window.localStorage.getItem(GUEST_RENDER_USAGE_KEY) || '0', 10) || 0
+  } catch {
+    return 0
+  }
+}
+
+const writeGuestRenderUsage = (value) => {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(GUEST_RENDER_USAGE_KEY, String(value))
+}
+
+const getUserQuotaSnapshot = (user) => {
+  if (!user) {
+    const guestUsage = readGuestRenderUsage()
+    return {
+      state: 'guest',
+      limit: GUEST_RENDER_LIMIT,
+      used: guestUsage,
+      remaining: Math.max(0, GUEST_RENDER_LIMIT - guestUsage),
+      blocked: guestUsage >= GUEST_RENDER_LIMIT,
+      message:
+        guestUsage >= GUEST_RENDER_LIMIT
+          ? 'Tu prueba rápida como invitado se agotó. Regístrate gratis para continuar.'
+          : 'Tienes una prueba rápida como invitado disponible.',
+    }
+  }
+
+  const normalized = normalizeStoredUser(user)
+  if (!normalized.emailVerified) {
+    return {
+      state: 'verify',
+      blocked: true,
+      message: 'Verifica tu email para activar tu prueba gratis.',
+    }
+  }
+
+  if (normalized.planId && normalized.planId !== 'free') {
+    return {
+      state: 'paid',
+      blocked: false,
+      message: `Plan ${normalized.planId.toUpperCase()} activo. Renders ilimitados.`,
+    }
+  }
+
+  if (isTrialActive(normalized)) {
+    const remainingTrial = Math.max(
+      0,
+      Number(normalized.trialRendersLimit || TRIAL_RENDER_LIMIT) -
+        Number(normalized.trialRendersUsed || 0),
+    )
+    return {
+      state: 'trial',
+      limit: normalized.trialRendersLimit,
+      used: normalized.trialRendersUsed,
+      remaining: remainingTrial,
+      trialEndsAt: normalized.trialEndsAt,
+      blocked: remainingTrial <= 0,
+      message:
+        remainingTrial > 0
+          ? `Prueba Pro activa. Te quedan ${remainingTrial} renders.`
+          : 'Has agotado los renders de prueba. Pasa a un plan de pago o usa el plan gratis.',
+    }
+  }
+
+  const remainingFree = Math.max(
+    0,
+    Number(normalized.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT) -
+      Number(normalized.freeMonthlyRendersUsed || 0),
+  )
+  return {
+    state: 'free',
+    period: normalized.freeMonthlyPeriod,
+    limit: normalized.freeMonthlyRendersLimit,
+    used: normalized.freeMonthlyRendersUsed,
+    remaining: remainingFree,
+    blocked: remainingFree <= 0,
+    message:
+      remainingFree > 0
+        ? `Plan gratis: te quedan ${remainingFree} renders este mes.`
+        : 'Has alcanzado el límite del plan gratis este mes.',
+  }
+}
+
+const consumeLocalRenderQuota = async (user) => {
+  if (!user) {
+    const guestUsage = readGuestRenderUsage()
+    if (guestUsage >= GUEST_RENDER_LIMIT) {
+      return {
+        allowed: false,
+        reason: 'guest_limit',
+        message: 'Regístrate para continuar después de la prueba rápida gratuita.',
+      }
+    }
+
+    writeGuestRenderUsage(guestUsage + 1)
+    return {
+      allowed: true,
+      user: null,
+      quota: getUserQuotaSnapshot(null),
+    }
+  }
+
+  const storedUser = readLocalUserByEmail(user.email)
+  if (!storedUser) {
+    return {
+      allowed: false,
+      reason: 'user_not_found',
+      message: 'No se encontró tu cuenta local. Inicia sesión nuevamente.',
+    }
+  }
+
+  let normalized = withTrialIfEligible(storedUser)
+  normalized = normalizeStoredUser(normalized)
+
+  const quotaBefore = getUserQuotaSnapshot(normalized)
+  if (quotaBefore.blocked) {
+    return {
+      allowed: false,
+      reason: quotaBefore.state,
+      message: quotaBefore.message,
+      user: sanitizeAuthUser(normalized),
+      quota: quotaBefore,
+    }
+  }
+
+  if (quotaBefore.state === 'trial') {
+    normalized.trialRendersUsed = Number(normalized.trialRendersUsed || 0) + 1
+  } else if (quotaBefore.state === 'free') {
+    normalized.freeMonthlyRendersUsed = Number(normalized.freeMonthlyRendersUsed || 0) + 1
+  }
+
+  const savedUser = upsertLocalUser(normalized)
+  saveAuthSession(savedUser)
+
+  return {
+    allowed: true,
+    user: sanitizeAuthUser(savedUser),
+    quota: getUserQuotaSnapshot(savedUser),
+  }
 }
 
 const clamp = (value, min = 0, max = 255) => Math.min(max, Math.max(min, value))
@@ -1046,15 +1449,12 @@ const formatCheckoutError = async (response) => {
   return 'No se pudo iniciar el checkout de Stripe.'
 }
 
-const formatApiError = async (response, fallbackMessage) => {
+const safeParseJson = async (response) => {
   try {
-    const payload = await response.json()
-    if (payload?.error) return payload.error
+    return await response.json()
   } catch {
-    return fallbackMessage
+    return null
   }
-
-  return fallbackMessage
 }
 
 function App() {
@@ -1092,10 +1492,14 @@ function App() {
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authConfirmPassword, setAuthConfirmPassword] = useState('')
+  const [authCode, setAuthCode] = useState('')
+  const [authRecoveryPassword, setAuthRecoveryPassword] = useState('')
+  const [authRecoveryConfirmPassword, setAuthRecoveryConfirmPassword] = useState('')
   const [authError, setAuthError] = useState('')
   const [authNotice, setAuthNotice] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
+  const [quotaRevision, setQuotaRevision] = useState(0)
 
   const upholsteryMaskByFurnitureRef = useRef(new Map())
   const maskEditorCanvasRef = useRef(null)
@@ -1108,9 +1512,24 @@ function App() {
 
   useEffect(() => {
     const persistedSession = readAuthSession()
-    if (persistedSession) {
-      setCurrentUser(persistedSession)
+    if (!persistedSession) return
+
+    if (persistedSession.provider === 'local') {
+      const localUser = readLocalUserByEmail(persistedSession.email)
+      if (!localUser) {
+        clearAuthSession()
+        return
+      }
+
+      const hydratedUser = withTrialIfEligible(localUser)
+      upsertLocalUser(hydratedUser)
+      saveAuthSession(hydratedUser)
+      setCurrentUser(sanitizeAuthUser(hydratedUser))
+      setQuotaRevision((value) => value + 1)
+      return
     }
+
+    setCurrentUser(sanitizeAuthUser({ ...persistedSession, provider: 'api' }))
   }, [])
 
   useEffect(() => {
@@ -1131,6 +1550,9 @@ function App() {
     setAuthEmail('')
     setAuthPassword('')
     setAuthConfirmPassword('')
+    setAuthCode('')
+    setAuthRecoveryPassword('')
+    setAuthRecoveryConfirmPassword('')
     setAuthError('')
   }
 
@@ -1139,6 +1561,15 @@ function App() {
     setAuthModalOpen(true)
     setAuthNotice('')
     setAuthError('')
+    setAuthPassword('')
+    setAuthConfirmPassword('')
+    setAuthCode('')
+    setAuthRecoveryPassword('')
+    setAuthRecoveryConfirmPassword('')
+
+    if (currentUser?.email && (mode === 'verify' || mode === 'recover-request')) {
+      setAuthEmail(currentUser.email)
+    }
   }
 
   const closeAuthModal = () => {
@@ -1152,13 +1583,107 @@ function App() {
     setAuthNotice('')
     setAuthPassword('')
     setAuthConfirmPassword('')
+    setAuthCode('')
+    setAuthRecoveryPassword('')
+    setAuthRecoveryConfirmPassword('')
   }
 
   const handleLogout = () => {
     clearAuthSession()
     setCurrentUser(null)
+    setQuotaRevision((value) => value + 1)
     setAuthNotice('Sesion cerrada correctamente.')
     setAuthError('')
+  }
+
+  const applyAuthenticatedUser = (user, source = 'local') => {
+    if (!user) return null
+    const provider = source === 'api' ? 'api' : 'local'
+    const sanitized = sanitizeAuthUser({ ...user, provider })
+    setCurrentUser(sanitized)
+    saveAuthSession(sanitized)
+    setQuotaRevision((value) => value + 1)
+    return sanitized
+  }
+
+  const runAuthAction = async ({
+    apiEndpoint,
+    apiPayload,
+    localAction,
+    fallbackMessage,
+    fallbackStatuses = [404, 503],
+  }) => {
+    if (!API_BASE_URL) {
+      return { source: 'local', payload: await localAction() }
+    }
+
+    try {
+      const response = await fetch(apiUrl(apiEndpoint), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(apiPayload),
+      })
+
+      const payload = await safeParseJson(response)
+      if (response.ok) {
+        return { source: 'api', payload }
+      }
+
+      if (fallbackStatuses.includes(response.status)) {
+        return { source: 'local', payload: await localAction() }
+      }
+
+      const error = new Error(payload?.error || fallbackMessage)
+      error.status = response.status
+      error.payload = payload || {}
+      throw error
+    } catch (networkError) {
+      if (networkError?.status) {
+        throw networkError
+      }
+
+      return { source: 'local', payload: await localAction() }
+    }
+  }
+
+  const resolveAuthResultUser = (payload, source) => {
+    if (!payload) return null
+    const rawUser = payload.user || payload
+    if (!rawUser || typeof rawUser !== 'object') return null
+    return sanitizeAuthUser({
+      ...rawUser,
+      provider: source === 'api' ? 'api' : 'local',
+    })
+  }
+
+  const handleResendVerification = async () => {
+    const normalizedEmail = normalizeEmail(authEmail)
+    if (!isEmailValid(normalizedEmail)) {
+      setAuthError('Introduce un email valido para reenviar el código.')
+      return
+    }
+
+    setAuthError('')
+    setAuthLoading(true)
+    try {
+      const { payload } = await runAuthAction({
+        apiEndpoint: '/api/auth/resend-verification',
+        apiPayload: { email: normalizedEmail },
+        localAction: () => resendLocalVerificationCode({ email: normalizedEmail }),
+        fallbackMessage: 'No se pudo reenviar el código de verificación.',
+      })
+
+      const exposedCode = payload?.verification?.code
+      setAuthNotice(
+        exposedCode
+          ? `Código reenviado. Código demo: ${exposedCode}`
+          : payload?.message || 'Te hemos reenviado el código de verificación.',
+      )
+    } catch (error) {
+      setAuthError(error.message || 'No se pudo reenviar el código.')
+    } finally {
+      setAuthLoading(false)
+    }
   }
 
   const submitAuth = async (event) => {
@@ -1166,122 +1691,294 @@ function App() {
 
     const normalizedName = authName.trim()
     const normalizedEmail = normalizeEmail(authEmail)
+    const normalizedCode = authCode.trim()
 
     if (authMode === 'register' && normalizedName.length < 2) {
       setAuthError('El nombre debe tener al menos 2 caracteres.')
       return
     }
+
     if (!isEmailValid(normalizedEmail)) {
       setAuthError('Introduce un email valido.')
       return
     }
-    if (authPassword.length < 8) {
+
+    if ((authMode === 'register' || authMode === 'login') && !authPassword) {
+      setAuthError('Introduce tu contraseña.')
+      return
+    }
+
+    if (authMode === 'register' && authPassword.length < 8) {
       setAuthError('La contraseña debe tener al menos 8 caracteres.')
       return
     }
+
     if (authMode === 'register' && authPassword !== authConfirmPassword) {
       setAuthError('Las contraseñas no coinciden.')
       return
     }
 
+    if (authMode === 'verify' && !normalizedCode) {
+      setAuthError('Introduce el código de verificación.')
+      return
+    }
+
+    if (authMode === 'recover-reset') {
+      if (!normalizedCode) {
+        setAuthError('Introduce el código de recuperación.')
+        return
+      }
+      if (authRecoveryPassword.length < 8) {
+        setAuthError('La nueva contraseña debe tener al menos 8 caracteres.')
+        return
+      }
+      if (authRecoveryPassword !== authRecoveryConfirmPassword) {
+        setAuthError('Las contraseñas no coinciden.')
+        return
+      }
+    }
+
     setAuthError('')
     setAuthLoading(true)
 
-    const attemptLocalAuth = async () => {
-      if (authMode === 'register') {
-        return registerLocalUser({
-          name: normalizedName,
-          email: normalizedEmail,
-          password: authPassword,
-        })
-      }
-
-      return loginLocalUser({ email: normalizedEmail, password: authPassword })
-    }
-
     try {
-      let authenticatedUser = null
-      let apiHandled = false
-
-      if (!API_BASE_URL) {
-        authenticatedUser = await attemptLocalAuth()
-      } else {
-        try {
-          const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login'
-          const response = await fetch(apiUrl(endpoint), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+      if (authMode === 'register') {
+        const { source, payload } = await runAuthAction({
+          apiEndpoint: '/api/auth/register',
+          apiPayload: {
+            name: normalizedName,
+            email: normalizedEmail,
+            password: authPassword,
+          },
+          localAction: () =>
+            registerLocalUser({
               name: normalizedName,
               email: normalizedEmail,
               password: authPassword,
             }),
-          })
+          fallbackMessage: 'No se pudo completar el registro.',
+        })
 
-          if (response.ok) {
-            const payload = await response.json()
-            authenticatedUser = sanitizeAuthUser({
-              ...payload.user,
-              provider: 'api',
-            })
-            saveAuthSession(authenticatedUser)
-            apiHandled = true
-          } else if (response.status === 404 || response.status === 503) {
-            authenticatedUser = await attemptLocalAuth()
-          } else {
-            const authApiError = await formatApiError(
-              response,
-              authMode === 'register'
-                ? 'No se pudo completar el registro.'
-                : 'No se pudo iniciar sesion.',
-            )
-            const nonFallbackError = new Error(authApiError)
-            nonFallbackError.disableFallback = true
-            throw nonFallbackError
-          }
-        } catch (networkError) {
-          if (networkError?.disableFallback) {
-            throw networkError
-          }
-          if (apiHandled) {
-            throw networkError
-          }
-          authenticatedUser = await attemptLocalAuth()
-        }
+        const user = resolveAuthResultUser(payload, source)
+        applyAuthenticatedUser(user, source)
+        setAuthMode('verify')
+        setAuthPassword('')
+        setAuthConfirmPassword('')
+        setAuthCode('')
+
+        const exposedCode = payload?.verification?.code
+        setAuthNotice(
+          exposedCode
+            ? `Cuenta creada. Código demo de verificación: ${exposedCode}`
+            : 'Cuenta creada. Revisa tu email e introduce el código de verificación.',
+        )
+        return
       }
 
-      setCurrentUser(authenticatedUser)
-      setAuthNotice(
-        authMode === 'register'
-          ? `Registro completado. Bienvenido/a ${authenticatedUser.name}.`
-          : `Sesion iniciada. Hola ${authenticatedUser.name}.`,
-      )
-      resetAuthForm()
-      closeAuthModal()
+      if (authMode === 'login') {
+        const { source, payload } = await runAuthAction({
+          apiEndpoint: '/api/auth/login',
+          apiPayload: {
+            email: normalizedEmail,
+            password: authPassword,
+          },
+          localAction: () => loginLocalUser({ email: normalizedEmail, password: authPassword }),
+          fallbackMessage: 'No se pudo iniciar sesion.',
+        })
+
+        const user = resolveAuthResultUser(payload, source)
+        applyAuthenticatedUser(user, source)
+        setAuthNotice(`Sesion iniciada. Hola ${user?.name || 'de nuevo'}.`)
+        resetAuthForm()
+        closeAuthModal()
+        return
+      }
+
+      if (authMode === 'verify') {
+        const { source, payload } = await runAuthAction({
+          apiEndpoint: '/api/auth/verify-email',
+          apiPayload: {
+            email: normalizedEmail,
+            code: normalizedCode,
+          },
+          localAction: () => verifyLocalUserEmail({ email: normalizedEmail, code: normalizedCode }),
+          fallbackMessage: 'No se pudo verificar el email.',
+        })
+
+        const user = resolveAuthResultUser(payload, source)
+        applyAuthenticatedUser(user, source)
+        setAuthNotice('Email verificado. Tu prueba gratis Pro está activa.')
+        resetAuthForm()
+        closeAuthModal()
+        return
+      }
+
+      if (authMode === 'recover-request') {
+        const { payload } = await runAuthAction({
+          apiEndpoint: '/api/auth/password-recovery/request',
+          apiPayload: { email: normalizedEmail },
+          localAction: () => requestLocalPasswordReset({ email: normalizedEmail }),
+          fallbackMessage: 'No se pudo solicitar la recuperación de contraseña.',
+        })
+
+        setAuthMode('recover-reset')
+        setAuthCode('')
+        setAuthRecoveryPassword('')
+        setAuthRecoveryConfirmPassword('')
+        const exposedCode = payload?.reset?.code
+        setAuthNotice(
+          exposedCode
+            ? `Código de recuperación enviado. Código demo: ${exposedCode}`
+            : payload?.message || 'Te hemos enviado un código de recuperación.',
+        )
+        return
+      }
+
+      if (authMode === 'recover-reset') {
+        await runAuthAction({
+          apiEndpoint: '/api/auth/password-recovery/confirm',
+          apiPayload: {
+            email: normalizedEmail,
+            code: normalizedCode,
+            newPassword: authRecoveryPassword,
+          },
+          localAction: () =>
+            resetLocalPassword({
+              email: normalizedEmail,
+              code: normalizedCode,
+              newPassword: authRecoveryPassword,
+            }),
+          fallbackMessage: 'No se pudo actualizar la contraseña.',
+        })
+
+        setAuthNotice('Contraseña actualizada. Ya puedes iniciar sesión.')
+        setAuthMode('login')
+        setAuthPassword('')
+        setAuthConfirmPassword('')
+        setAuthCode('')
+        setAuthRecoveryPassword('')
+        setAuthRecoveryConfirmPassword('')
+        return
+      }
     } catch (error) {
-      setAuthError(error.message || 'No se pudo completar la autenticacion.')
+      if (error?.verificationRequired || error?.payload?.verificationRequired) {
+        if (error?.email) {
+          setAuthEmail(error.email)
+        }
+        setAuthMode('verify')
+        setAuthPassword('')
+        setAuthConfirmPassword('')
+        setAuthCode('')
+        setAuthNotice(error?.payload?.message || 'Debes verificar tu email antes de entrar.')
+      } else {
+        setAuthError(error.message || 'No se pudo completar la autenticacion.')
+      }
     } finally {
       setAuthLoading(false)
     }
   }
 
+  const applyLocalPlan = (user, planId) => {
+    const localUser = readLocalUserByEmail(user.email) || normalizeStoredUser({ ...user, provider: 'local' })
+    localUser.planId = planId
+    const savedUser = upsertLocalUser(localUser)
+    const sanitized = sanitizeAuthUser({
+      ...savedUser,
+      provider: user.provider === 'api' ? 'api' : 'local',
+    })
+    setCurrentUser(sanitized)
+    saveAuthSession(sanitized)
+    setQuotaRevision((value) => value + 1)
+    return sanitized
+  }
+
+  const activatePlanForCurrentUser = async (planId) => {
+    if (!planId || planId === 'free') return false
+    const user = currentUser || readAuthSession()
+    if (!user?.email) return false
+
+    if (API_BASE_URL && user.provider === 'api') {
+      try {
+        const response = await fetch(apiUrl('/api/auth/activate-plan'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: user.email,
+            planId,
+          }),
+        })
+        const payload = await safeParseJson(response)
+        if (response.ok && payload?.user) {
+          applyAuthenticatedUser(payload.user, 'api')
+          return true
+        }
+      } catch {
+        return false
+      }
+    }
+
+    applyLocalPlan(user, planId)
+    return true
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const checkoutStatus = params.get('checkout')
+    if (!checkoutStatus) return
 
-    if (checkoutStatus === 'success') {
-      setPaymentNotice('Pago confirmado. Tu suscripcion Stripe se ha iniciado correctamente.')
-      setPaymentError('')
-    } else if (checkoutStatus === 'cancelled') {
-      setPaymentNotice('Checkout cancelado. Puedes volver a intentarlo cuando quieras.')
-      setPaymentError('')
+    const syncCheckoutState = async () => {
+      if (checkoutStatus === 'success') {
+        const pendingPlan = readPendingPlan()
+        const activated = pendingPlan?.planId
+          ? await activatePlanForCurrentUser(pendingPlan.planId)
+          : false
+
+        setPaymentNotice(
+          activated
+            ? `Pago confirmado. Plan ${pendingPlan.planId.toUpperCase()} activado correctamente.`
+            : 'Pago confirmado. Tu suscripcion Stripe se ha iniciado correctamente.',
+        )
+        setPaymentError('')
+        clearPendingPlan()
+      } else if (checkoutStatus === 'cancelled') {
+        setPaymentNotice('Checkout cancelado. Puedes volver a intentarlo cuando quieras.')
+        setPaymentError('')
+      }
     }
 
-    if (checkoutStatus) {
-      const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`
-      window.history.replaceState({}, '', cleanUrl)
-    }
+    syncCheckoutState()
+
+    const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`
+    window.history.replaceState({}, '', cleanUrl)
   }, [])
+
+  useEffect(() => {
+    if (!currentUser?.email || currentUser.provider !== 'api' || !API_BASE_URL) return
+
+    let cancelled = false
+
+    const refreshApiProfile = async () => {
+      try {
+        const response = await fetch(
+          `${apiUrl('/api/auth/profile')}?email=${encodeURIComponent(currentUser.email)}`,
+        )
+        const payload = await safeParseJson(response)
+        if (!response.ok || !payload?.user || cancelled) return
+
+        const updatedUser = sanitizeAuthUser({ ...payload.user, provider: 'api' })
+        setCurrentUser(updatedUser)
+        saveAuthSession(updatedUser)
+        setQuotaRevision((value) => value + 1)
+      } catch {
+        // Keep current session data if profile refresh fails.
+      }
+    }
+
+    refreshApiProfile()
+    return () => {
+      cancelled = true
+    }
+  }, [currentUser?.email, currentUser?.provider])
 
   const filteredFurniture = useMemo(
     () =>
@@ -1650,6 +2347,65 @@ function App() {
     setMobileMenuOpen(false)
   }
 
+  const accountSnapshot = useMemo(
+    () => getUserQuotaSnapshot(currentUser),
+    [currentUser, quotaRevision],
+  )
+
+  const consumeRenderQuota = async () => {
+    if (!currentUser || !API_BASE_URL || currentUser.provider !== 'api') {
+      const localResult = await consumeLocalRenderQuota(currentUser)
+      if (localResult.user) {
+        setCurrentUser(localResult.user)
+        saveAuthSession(localResult.user)
+      }
+      setQuotaRevision((value) => value + 1)
+      return localResult
+    }
+
+    try {
+      const response = await fetch(apiUrl('/api/auth/consume-render'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: currentUser.email }),
+      })
+      const payload = await safeParseJson(response)
+
+      if (response.ok) {
+        const updatedUser = sanitizeAuthUser({ ...(payload?.user || currentUser), provider: 'api' })
+        setCurrentUser(updatedUser)
+        saveAuthSession(updatedUser)
+        setQuotaRevision((value) => value + 1)
+        return {
+          allowed: Boolean(payload?.allowed),
+          message: payload?.message || '',
+          quota: payload?.quota || getUserQuotaSnapshot(updatedUser),
+          user: updatedUser,
+        }
+      }
+
+      if (response.status === 404 || response.status === 503) {
+        const fallbackResult = await consumeLocalRenderQuota({ ...currentUser, provider: 'local' })
+        if (fallbackResult.user) {
+          setCurrentUser(fallbackResult.user)
+          saveAuthSession(fallbackResult.user)
+        }
+        setQuotaRevision((value) => value + 1)
+        return fallbackResult
+      }
+
+      return {
+        allowed: false,
+        message: payload?.error || 'No se pudo validar tu cuota de renders.',
+      }
+    } catch {
+      return {
+        allowed: false,
+        message: 'No se pudo validar tu cuota en este momento. Intenta de nuevo.',
+      }
+    }
+  }
+
   const applyFabric = async () => {
     if (!selectedFurniture || !selectedFabric) return
 
@@ -1658,6 +2414,24 @@ function App() {
     setIsApplyingFabric(true)
 
     try {
+      const quotaResult = await consumeRenderQuota()
+      if (!quotaResult.allowed) {
+        setRenderError(quotaResult.message || 'No tienes renders disponibles en este momento.')
+        if (!currentUser) {
+          openAuthModal('register')
+        } else if (quotaResult.reason === 'verify') {
+          openAuthModal('verify')
+        } else if (
+          quotaResult.reason === 'trial' ||
+          quotaResult.reason === 'free' ||
+          quotaResult.quota?.state === 'trial' ||
+          quotaResult.quota?.state === 'free'
+        ) {
+          jumpTo('precios')
+        }
+        return
+      }
+
       const upholsteryMask = await ensureUpholsteryMask(selectedFurniture.id)
       const renderedResult = await renderFabricPreview(
         selectedFurniture.id,
@@ -1666,7 +2440,9 @@ function App() {
       )
       setRenderedPreviewSrc(renderedResult)
       setRenderStatus(
-        `Vista previa actualizada: ${selectedFurniture.name} + ${selectedFabric.name}.`,
+        quotaResult?.quota?.message
+          ? `Vista previa actualizada: ${selectedFurniture.name} + ${selectedFabric.name}. ${quotaResult.quota.message}`
+          : `Vista previa actualizada: ${selectedFurniture.name} + ${selectedFabric.name}.`,
       )
     } catch {
       setRenderError(
@@ -1684,18 +2460,32 @@ function App() {
       return
     }
 
+    if (!currentUser) {
+      setPaymentError('Crea tu cuenta para suscribirte.')
+      openAuthModal('register')
+      return
+    }
+
+    if (!currentUser.emailVerified) {
+      setPaymentError('Debes verificar tu email antes de suscribirte.')
+      openAuthModal('verify')
+      return
+    }
+
     const billingCycle = annualBilling ? 'annual' : 'monthly'
     const directPaymentLink = getDirectPaymentLink(plan.id, billingCycle)
 
     setPaymentError('')
     setPaymentNotice('')
     setCheckoutLoadingPlanId(plan.id)
+    savePendingPlan({ planId: plan.id, billingCycle })
 
     if (!API_BASE_URL) {
       if (!directPaymentLink) {
         setPaymentError(
           'Checkout no disponible: configura VITE_API_BASE_URL o enlaces directos de Stripe.',
         )
+        clearPendingPlan()
         setCheckoutLoadingPlanId('')
         return
       }
@@ -1712,6 +2502,8 @@ function App() {
           planId: plan.id,
           billingCycle,
           origin: window.location.origin,
+          customerEmail: currentUser.email,
+          clientReferenceId: currentUser.id,
         }),
       })
 
@@ -1750,6 +2542,7 @@ function App() {
         return
       }
 
+      clearPendingPlan()
       setPaymentError(error.message || 'No se pudo iniciar el checkout de Stripe.')
     } finally {
       setCheckoutLoadingPlanId('')
@@ -1767,6 +2560,44 @@ function App() {
 
   const year = new Date().getFullYear()
   const canApply = Boolean(selectedFurniture && selectedFabric && !isApplyingFabric)
+  const activePlan = PLANS.find((plan) => plan.id === currentUser?.planId) || PLANS[0]
+  const trialDaysLeft =
+    currentUser?.trialEndsAt && isTrialActive(currentUser)
+      ? Math.max(
+          0,
+          Math.ceil((new Date(currentUser.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+        )
+      : 0
+  const authModeTitle =
+    authMode === 'register'
+      ? 'Alta de usuario'
+      : authMode === 'login'
+        ? 'Iniciar sesion'
+        : authMode === 'verify'
+          ? 'Verificar email'
+          : authMode === 'recover-request'
+            ? 'Recuperar contraseña'
+            : 'Restablecer contraseña'
+  const authSubmitLabel =
+    authMode === 'register'
+      ? authLoading
+        ? 'Creando cuenta...'
+        : 'Crear cuenta'
+      : authMode === 'login'
+        ? authLoading
+          ? 'Iniciando sesion...'
+          : 'Entrar'
+        : authMode === 'verify'
+          ? authLoading
+            ? 'Verificando...'
+            : 'Verificar email'
+          : authMode === 'recover-request'
+            ? authLoading
+              ? 'Enviando codigo...'
+              : 'Enviar codigo'
+            : authLoading
+              ? 'Actualizando...'
+              : 'Actualizar contraseña'
 
   return (
     <div className="app-shell">
@@ -1778,6 +2609,9 @@ function App() {
           </div>
 
           <nav className="desktop-nav">
+            <button type="button" onClick={() => jumpTo('perfil')}>
+              Perfil
+            </button>
             <button type="button" onClick={() => jumpTo('catalogo')}>
               Catalogo
             </button>
@@ -1814,6 +2648,9 @@ function App() {
 
         {mobileMenuOpen ? (
           <div className="mobile-nav container">
+            <button type="button" onClick={() => jumpTo('perfil')}>
+              Perfil
+            </button>
             <button type="button" onClick={() => jumpTo('catalogo')}>
               Catalogo
             </button>
@@ -1848,7 +2685,7 @@ function App() {
         ) : null}
       </header>
 
-      {authNotice ? (
+      {authNotice && !authModalOpen ? (
         <div className="container">
           <p className="auth-global-notice">{authNotice}</p>
         </div>
@@ -1899,6 +2736,89 @@ function App() {
       </section>
 
       <main className="container main-content">
+        <section id="perfil" className="section-space profile-section">
+          <div className="section-title">
+            <h2>Panel de perfil</h2>
+            <p>
+              Gestiona tu cuenta, verificación de email, recuperación de contraseña y estado
+              de suscripción desde un único sitio.
+            </p>
+          </div>
+
+          {currentUser ? (
+            <div className="profile-card">
+              <div className="profile-grid">
+                <div>
+                  <p className="profile-label">Usuario</p>
+                  <strong>{currentUser.name}</strong>
+                  <p>{currentUser.email}</p>
+                </div>
+                <div>
+                  <p className="profile-label">Email</p>
+                  <strong>{currentUser.emailVerified ? 'Verificado' : 'Pendiente de verificación'}</strong>
+                  <p>
+                    {currentUser.emailVerified
+                      ? 'Cuenta verificada correctamente.'
+                      : 'Verifica tu correo para activar la prueba Pro.'}
+                  </p>
+                </div>
+                <div>
+                  <p className="profile-label">Plan</p>
+                  <strong>{activePlan?.name || 'Gratis'}</strong>
+                  <p>
+                    {currentUser.planId !== 'free'
+                      ? 'Suscripción activa con renders ilimitados.'
+                      : trialDaysLeft > 0
+                        ? `Prueba Pro activa (${trialDaysLeft} días restantes).`
+                        : 'Plan gratis mensual activo.'}
+                  </p>
+                </div>
+              </div>
+
+              <p className="profile-quota">{accountSnapshot.message}</p>
+
+              <div className="profile-actions">
+                {!currentUser.emailVerified ? (
+                  <button
+                    className="btn btn-outline-dark"
+                    type="button"
+                    onClick={() => openAuthModal('verify')}
+                  >
+                    Verificar email
+                  </button>
+                ) : null}
+                <button
+                  className="btn btn-outline-dark"
+                  type="button"
+                  onClick={() => openAuthModal('recover-request')}
+                >
+                  Recuperar contraseña
+                </button>
+                {currentUser.planId === 'free' ? (
+                  <button className="btn btn-primary" type="button" onClick={() => jumpTo('precios')}>
+                    Mejorar plan
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="profile-card guest">
+              <p>
+                Empieza con 1 render invitado, activa 14 días de prueba Pro al verificar tu email
+                y luego decide si quieres pasar a un plan de pago.
+              </p>
+              <div className="profile-actions">
+                <button className="btn btn-primary" type="button" onClick={() => openAuthModal('register')}>
+                  Crear cuenta gratis
+                </button>
+                <button className="btn btn-outline-dark" type="button" onClick={() => openAuthModal('login')}>
+                  Ya tengo cuenta
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         <section id="mi-diseno" className="section-space">
           <div className="section-title">
             <h2>Disena tu tapizado</h2>
@@ -2304,6 +3224,7 @@ function App() {
                   {isApplyingFabric ? 'Aplicando tela...' : 'Aplicar tela'}
                 </button>
 
+                {accountSnapshot?.message ? <p className="render-status">{accountSnapshot.message}</p> : null}
                 {renderError ? <p className="render-error">{renderError}</p> : null}
                 {renderStatus ? <p className="render-status">{renderStatus}</p> : null}
               </div>
@@ -2341,6 +3262,10 @@ function App() {
               perfecto para tu negocio de tapiceria.
             </p>
           </div>
+          <p className="payment-notice">
+            Flujo activo: 1 render invitado - registro - verificacion de email - 14 dias de
+            prueba Pro - plan gratis (5 renders/mes) o suscripcion.
+          </p>
 
           <div className="billing-toggle">
             <span className={!annualBilling ? 'active' : ''}>Mensual</span>
@@ -2361,39 +3286,46 @@ function App() {
           {paymentError ? <p className="payment-error">{paymentError}</p> : null}
 
           <div className="plans-grid">
-            {PLANS.map((plan) => (
-              <article
-                key={plan.name}
-                className={`plan-card${plan.current ? ' current' : ''}${plan.popular ? ' popular' : ''}`}
-              >
-                {plan.current ? <div className="plan-tag current-tag">Plan actual</div> : null}
-                {plan.popular ? <div className="plan-tag popular-tag">Mas popular</div> : null}
-
-                <div className="plan-icon">{plan.icon}</div>
-                <h3>{plan.name}</h3>
-                <p>{plan.audience}</p>
-
-                <div className="plan-price">
-                  <strong>{formatPrice(plan)}</strong>
-                  {plan.monthlyPrice > 0 ? <span>/mes</span> : null}
-                </div>
-
-                <ul>
-                  {plan.features.map((feature) => (
-                    <li key={feature}>- {feature}</li>
-                  ))}
-                </ul>
-
-                <button
-                  className={plan.popular ? 'btn btn-primary full-width' : 'btn btn-outline-dark full-width'}
-                  type="button"
-                  disabled={plan.id === 'free' || checkoutLoadingPlanId === plan.id}
-                  onClick={() => handlePlanCheckout(plan)}
+            {PLANS.map((plan) => {
+              const isCurrentPlan = (currentUser?.planId || 'free') === plan.id
+              return (
+                <article
+                  key={plan.name}
+                  className={`plan-card${isCurrentPlan ? ' current' : ''}${plan.popular ? ' popular' : ''}`}
                 >
-                  {checkoutLoadingPlanId === plan.id ? 'Abriendo checkout...' : plan.cta}
-                </button>
-              </article>
-            ))}
+                  {isCurrentPlan ? <div className="plan-tag current-tag">Plan actual</div> : null}
+                  {plan.popular ? <div className="plan-tag popular-tag">Mas popular</div> : null}
+
+                  <div className="plan-icon">{plan.icon}</div>
+                  <h3>{plan.name}</h3>
+                  <p>{plan.audience}</p>
+
+                  <div className="plan-price">
+                    <strong>{formatPrice(plan)}</strong>
+                    {plan.monthlyPrice > 0 ? <span>/mes</span> : null}
+                  </div>
+
+                  <ul>
+                    {plan.features.map((feature) => (
+                      <li key={feature}>- {feature}</li>
+                    ))}
+                  </ul>
+
+                  <button
+                    className={plan.popular ? 'btn btn-primary full-width' : 'btn btn-outline-dark full-width'}
+                    type="button"
+                    disabled={isCurrentPlan || checkoutLoadingPlanId === plan.id}
+                    onClick={() => handlePlanCheckout(plan)}
+                  >
+                    {isCurrentPlan
+                      ? 'Plan actual'
+                      : checkoutLoadingPlanId === plan.id
+                        ? 'Abriendo checkout...'
+                        : plan.cta}
+                  </button>
+                </article>
+              )
+            })}
           </div>
         </div>
       </section>
@@ -2410,7 +3342,7 @@ function App() {
         >
           <div className="auth-modal" role="dialog" aria-modal="true" aria-label="Autenticacion">
             <div className="auth-modal-head">
-              <h3>{authMode === 'register' ? 'Alta de usuario' : 'Iniciar sesion'}</h3>
+              <h3>{authModeTitle}</h3>
               <button
                 type="button"
                 className="auth-modal-close"
@@ -2421,22 +3353,24 @@ function App() {
               </button>
             </div>
 
-            <div className="auth-mode-switch">
-              <button
-                type="button"
-                className={authMode === 'register' ? 'auth-mode-btn active' : 'auth-mode-btn'}
-                onClick={() => switchAuthMode('register')}
-              >
-                Registro
-              </button>
-              <button
-                type="button"
-                className={authMode === 'login' ? 'auth-mode-btn active' : 'auth-mode-btn'}
-                onClick={() => switchAuthMode('login')}
-              >
-                Acceso
-              </button>
-            </div>
+            {authMode === 'register' || authMode === 'login' ? (
+              <div className="auth-mode-switch">
+                <button
+                  type="button"
+                  className={authMode === 'register' ? 'auth-mode-btn active' : 'auth-mode-btn'}
+                  onClick={() => switchAuthMode('register')}
+                >
+                  Registro
+                </button>
+                <button
+                  type="button"
+                  className={authMode === 'login' ? 'auth-mode-btn active' : 'auth-mode-btn'}
+                  onClick={() => switchAuthMode('login')}
+                >
+                  Acceso
+                </button>
+              </div>
+            ) : null}
 
             <form className="auth-form" onSubmit={submitAuth}>
               {authMode === 'register' ? (
@@ -2465,17 +3399,19 @@ function App() {
                 />
               </label>
 
-              <label className="auth-field">
-                Contraseña
-                <input
-                  type="password"
-                  value={authPassword}
-                  onChange={(event) => setAuthPassword(event.target.value)}
-                  placeholder="Minimo 8 caracteres"
-                  autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
-                  required
-                />
-              </label>
+              {authMode === 'register' || authMode === 'login' ? (
+                <label className="auth-field">
+                  Contraseña
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    placeholder="Minimo 8 caracteres"
+                    autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+                    required
+                  />
+                </label>
+              ) : null}
 
               {authMode === 'register' ? (
                 <label className="auth-field">
@@ -2491,21 +3427,76 @@ function App() {
                 </label>
               ) : null}
 
+              {authMode === 'verify' || authMode === 'recover-reset' ? (
+                <label className="auth-field">
+                  Código
+                  <input
+                    type="text"
+                    value={authCode}
+                    onChange={(event) => setAuthCode(event.target.value)}
+                    placeholder="Introduce el código recibido"
+                    autoComplete="one-time-code"
+                    required
+                  />
+                </label>
+              ) : null}
+
+              {authMode === 'recover-reset' ? (
+                <>
+                  <label className="auth-field">
+                    Nueva contraseña
+                    <input
+                      type="password"
+                      value={authRecoveryPassword}
+                      onChange={(event) => setAuthRecoveryPassword(event.target.value)}
+                      placeholder="Minimo 8 caracteres"
+                      autoComplete="new-password"
+                      required
+                    />
+                  </label>
+
+                  <label className="auth-field">
+                    Confirmar contraseña
+                    <input
+                      type="password"
+                      value={authRecoveryConfirmPassword}
+                      onChange={(event) => setAuthRecoveryConfirmPassword(event.target.value)}
+                      placeholder="Repite la nueva contraseña"
+                      autoComplete="new-password"
+                      required
+                    />
+                  </label>
+                </>
+              ) : null}
+
               <button className="btn btn-primary full-width" type="submit" disabled={authLoading}>
-                {authLoading
-                  ? authMode === 'register'
-                    ? 'Creando cuenta...'
-                    : 'Iniciando sesion...'
-                  : authMode === 'register'
-                    ? 'Crear cuenta'
-                    : 'Entrar'}
+                {authSubmitLabel}
               </button>
             </form>
 
+            <div className="auth-links">
+              {authMode === 'login' ? (
+                <button type="button" onClick={() => switchAuthMode('recover-request')}>
+                  ¿Olvidaste tu contraseña?
+                </button>
+              ) : null}
+              {authMode === 'verify' ? (
+                <button type="button" onClick={handleResendVerification} disabled={authLoading}>
+                  Reenviar código de verificación
+                </button>
+              ) : null}
+              {authMode === 'recover-request' || authMode === 'recover-reset' ? (
+                <button type="button" onClick={() => switchAuthMode('login')}>
+                  Volver al acceso
+                </button>
+              ) : null}
+            </div>
+
             {authError ? <p className="auth-error">{authError}</p> : null}
+            {authNotice ? <p className="auth-success">{authNotice}</p> : null}
             <p className="auth-note">
-              Tus datos se guardan en backend cuando esta disponible. Si no, se usa modo local
-              para que puedas seguir probando.
+              Tus datos se guardan en backend cuando está disponible. En modo demo también
+              tienes fallback local para poder probar registro, verificación y recuperación.
             </p>
           </div>
         </div>

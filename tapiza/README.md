@@ -15,6 +15,15 @@ Aplicacion React + Vite inspirada en la web de referencia:
 - Seccion de catalogo resumen.
 - Seccion de precios con toggle mensual/anual.
 - Footer corporativo.
+- Alta de usuario + login.
+- Verificacion de email (codigo).
+- Recuperacion de contraseña (solicitud + confirmacion con codigo).
+- Panel basico de perfil (estado de verificacion, plan y cuota).
+- Flujo de monetizacion:
+  - 1 render como invitado.
+  - Registro y verificacion de email.
+  - Prueba Pro de 14 dias.
+  - Plan gratis mensual (5 renders/mes) o suscripcion de pago.
 
 ## Ejecutar en local
 
@@ -55,6 +64,13 @@ Configura en `.env`:
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `POST /api/auth/password-recovery/request`
+- `POST /api/auth/password-recovery/confirm`
+- `GET /api/auth/profile?email=...`
+- `POST /api/auth/consume-render`
+- `POST /api/auth/activate-plan`
 - `GET /api/stripe/config`
 - `POST /api/stripe/checkout-session`
 - `POST /api/stripe/webhook`
@@ -69,6 +85,9 @@ Si `VITE_STRIPE_API_BASE_URL` no esta definido, el frontend usa enlaces directos
 
 Para autenticacion, si el endpoint API no esta disponible, la app usa almacenamiento local
 en navegador para permitir registro/inicio de sesion en modo demo.
+
+`AUTH_EXPOSE_CODES=true` permite devolver codigos de verificacion/recuperacion en respuestas API
+para entorno demo (no usar en produccion).
 
 ### Nota de seguridad
 

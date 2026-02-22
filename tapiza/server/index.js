@@ -44,13 +44,169 @@ const normalizeOrigin = (value) => {
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
+const authExposeCodes = process.env.AUTH_EXPOSE_CODES !== 'false'
 
-const sanitizeUser = (user) => ({
-  id: user.id,
-  name: user.name,
-  email: user.email,
-  createdAt: user.createdAt,
-})
+const TRIAL_DURATION_DAYS = 14
+const TRIAL_RENDER_LIMIT = 120
+const FREE_MONTHLY_RENDER_LIMIT = 5
+
+const monthPeriod = () => new Date().toISOString().slice(0, 7)
+const futureIsoByDays = (days) => {
+  const date = new Date()
+  date.setDate(date.getDate() + Number(days || 0))
+  return date.toISOString()
+}
+const futureIsoByHours = (hours) => {
+  const date = new Date()
+  date.setHours(date.getHours() + Number(hours || 0))
+  return date.toISOString()
+}
+const futureIsoByMinutes = (minutes) => {
+  const date = new Date()
+  date.setMinutes(date.getMinutes() + Number(minutes || 0))
+  return date.toISOString()
+}
+const generateNumericCode = () => `${Math.floor(100000 + Math.random() * 900000)}`
+
+const normalizeUserRecord = (user) => {
+  const normalized = {
+    ...user,
+    id: user.id,
+    name: String(user.name || '').trim(),
+    email: normalizeEmail(user.email),
+    createdAt: user.createdAt || new Date().toISOString(),
+    emailVerified: Boolean(user.emailVerified),
+    verificationCode: String(user.verificationCode || ''),
+    verificationExpiresAt: user.verificationExpiresAt || null,
+    resetCode: String(user.resetCode || ''),
+    resetExpiresAt: user.resetExpiresAt || null,
+    planId: user.planId || 'free',
+    trialStartedAt: user.trialStartedAt || null,
+    trialEndsAt: user.trialEndsAt || null,
+    trialRendersLimit: Number(user.trialRendersLimit || TRIAL_RENDER_LIMIT),
+    trialRendersUsed: Number(user.trialRendersUsed || 0),
+    freeMonthlyRendersLimit: Number(user.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT),
+    freeMonthlyRendersUsed: Number(user.freeMonthlyRendersUsed || 0),
+    freeMonthlyPeriod: user.freeMonthlyPeriod || monthPeriod(),
+  }
+
+  const period = monthPeriod()
+  if (normalized.freeMonthlyPeriod !== period) {
+    normalized.freeMonthlyPeriod = period
+    normalized.freeMonthlyRendersUsed = 0
+  }
+
+  return normalized
+}
+
+const activateTrialIfEligible = (user) => {
+  const normalized = normalizeUserRecord(user)
+  if (!normalized.emailVerified) {
+    return normalized
+  }
+
+  if (!normalized.trialStartedAt) {
+    normalized.trialStartedAt = new Date().toISOString()
+    normalized.trialEndsAt = futureIsoByDays(TRIAL_DURATION_DAYS)
+    normalized.trialRendersLimit = TRIAL_RENDER_LIMIT
+    normalized.trialRendersUsed = 0
+  }
+
+  return normalized
+}
+
+const isTrialActive = (user) =>
+  Boolean(user?.trialEndsAt) && new Date(user.trialEndsAt).getTime() > Date.now()
+
+const quotaSnapshot = (user) => {
+  const normalized = normalizeUserRecord(user)
+  if (!normalized.emailVerified) {
+    return {
+      state: 'verify',
+      blocked: true,
+      message: 'Verifica tu email para activar la prueba gratis.',
+    }
+  }
+  if (normalized.planId !== 'free') {
+    return {
+      state: 'paid',
+      blocked: false,
+      message: `Plan ${normalized.planId.toUpperCase()} activo. Renders ilimitados.`,
+    }
+  }
+  if (isTrialActive(normalized)) {
+    const remaining = Math.max(
+      0,
+      Number(normalized.trialRendersLimit || TRIAL_RENDER_LIMIT) -
+        Number(normalized.trialRendersUsed || 0),
+    )
+    return {
+      state: 'trial',
+      blocked: remaining <= 0,
+      remaining,
+      limit: normalized.trialRendersLimit,
+      used: normalized.trialRendersUsed,
+      trialEndsAt: normalized.trialEndsAt,
+      message:
+        remaining > 0
+          ? `Prueba Pro activa. Te quedan ${remaining} renders.`
+          : 'Has agotado la cuota de prueba.',
+    }
+  }
+
+  const remaining = Math.max(
+    0,
+    Number(normalized.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT) -
+      Number(normalized.freeMonthlyRendersUsed || 0),
+  )
+  return {
+    state: 'free',
+    blocked: remaining <= 0,
+    remaining,
+    limit: normalized.freeMonthlyRendersLimit,
+    used: normalized.freeMonthlyRendersUsed,
+    period: normalized.freeMonthlyPeriod,
+    message:
+      remaining > 0
+        ? `Plan gratis: te quedan ${remaining} renders este mes.`
+        : 'Has alcanzado el limite del plan gratis este mes.',
+  }
+}
+
+const consumeUserRender = (user) => {
+  let normalized = activateTrialIfEligible(user)
+  normalized = normalizeUserRecord(normalized)
+  const before = quotaSnapshot(normalized)
+  if (before.blocked) {
+    return { allowed: false, user: normalized, quota: before, message: before.message }
+  }
+  if (before.state === 'trial') {
+    normalized.trialRendersUsed = Number(normalized.trialRendersUsed || 0) + 1
+  } else if (before.state === 'free') {
+    normalized.freeMonthlyRendersUsed = Number(normalized.freeMonthlyRendersUsed || 0) + 1
+  }
+  const after = quotaSnapshot(normalized)
+  return { allowed: true, user: normalized, quota: after, message: after.message }
+}
+
+const sanitizeUser = (user) => {
+  const normalized = normalizeUserRecord(user)
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    email: normalized.email,
+    createdAt: normalized.createdAt,
+    emailVerified: normalized.emailVerified,
+    planId: normalized.planId,
+    trialStartedAt: normalized.trialStartedAt,
+    trialEndsAt: normalized.trialEndsAt,
+    trialRendersLimit: normalized.trialRendersLimit,
+    trialRendersUsed: normalized.trialRendersUsed,
+    freeMonthlyRendersLimit: normalized.freeMonthlyRendersLimit,
+    freeMonthlyRendersUsed: normalized.freeMonthlyRendersUsed,
+    freeMonthlyPeriod: normalized.freeMonthlyPeriod,
+  }
+}
 
 const withUsersLock = async (work) => {
   const previousLock = usersLock
@@ -81,7 +237,8 @@ const readUsers = async () => {
   try {
     const raw = await fs.readFile(authUsersFilePath, 'utf8')
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((entry) => normalizeUserRecord(entry))
   } catch {
     return []
   }
@@ -110,7 +267,7 @@ const verifyPassword = (password, salt, storedHash) => {
 
 app.use(cors({ origin: true, credentials: true }))
 
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe) {
     return res.status(503).json({ error: 'Stripe server no configurado.' })
   }
@@ -128,6 +285,26 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), (req,
     switch (event.type) {
       case 'checkout.session.completed':
         console.log('[Stripe webhook] checkout.session.completed', event.data.object.id)
+        try {
+          const checkoutSession = event.data.object
+          const customerEmail = normalizeEmail(
+            checkoutSession.customer_details?.email || checkoutSession.customer_email,
+          )
+          const planId = String(checkoutSession.metadata?.planId || '').trim()
+          if (isValidEmail(customerEmail) && PLAN_IDS.includes(planId) && planId !== 'free') {
+            await withUsersLock(async () => {
+              const users = await readUsers()
+              const index = users.findIndex((entry) => entry.email === customerEmail)
+              if (index < 0) return
+              const user = activateTrialIfEligible(users[index])
+              user.planId = planId
+              users[index] = user
+              await writeUsers(users)
+            })
+          }
+        } catch (error) {
+          console.error('[Stripe webhook] Error syncing user plan:', error.message)
+        }
         break
       case 'invoice.paid':
         console.log('[Stripe webhook] invoice.paid', event.data.object.id)
@@ -196,6 +373,19 @@ app.post('/api/auth/register', async (req, res) => {
         passwordHash: hash,
         passwordSalt: salt,
         createdAt: new Date().toISOString(),
+        emailVerified: false,
+        verificationCode: generateNumericCode(),
+        verificationExpiresAt: futureIsoByHours(24),
+        resetCode: '',
+        resetExpiresAt: null,
+        planId: 'free',
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialRendersLimit: TRIAL_RENDER_LIMIT,
+        trialRendersUsed: 0,
+        freeMonthlyRendersLimit: FREE_MONTHLY_RENDER_LIMIT,
+        freeMonthlyRendersUsed: 0,
+        freeMonthlyPeriod: monthPeriod(),
       }
 
       users.push(user)
@@ -207,7 +397,14 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'Ya existe una cuenta registrada con ese email.' })
     }
 
-    return res.status(201).json({ user: sanitizeUser(createdUser) })
+    return res.status(201).json({
+      user: sanitizeUser(createdUser),
+      verification: {
+        required: true,
+        ...(authExposeCodes ? { code: createdUser.verificationCode } : {}),
+      },
+      message: 'Cuenta creada. Verifica tu email para activar la prueba gratis.',
+    })
   } catch (error) {
     console.error('[Auth register] Error:', error.message)
     return res.status(500).json({ error: 'No se pudo completar el registro.' })
@@ -227,17 +424,385 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   try {
-    const users = await readUsers()
-    const user = users.find((entry) => entry.email === normalizedEmail)
+    const loginResult = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
 
-    if (!user || !verifyPassword(normalizedPassword, user.passwordSalt, user.passwordHash)) {
+      const user = users[index]
+      if (!verifyPassword(normalizedPassword, user.passwordSalt, user.passwordHash)) {
+        return { type: 'invalid_password' }
+      }
+
+      const normalizedUser = normalizeUserRecord(user)
+      if (!normalizedUser.emailVerified) {
+        return {
+          type: 'verification_required',
+          user: normalizedUser,
+        }
+      }
+
+      const activatedUser = activateTrialIfEligible(normalizedUser)
+      users[index] = activatedUser
+      await writeUsers(users)
+      return {
+        type: 'ok',
+        user: activatedUser,
+      }
+    })
+
+    if (loginResult.type === 'not_found' || loginResult.type === 'invalid_password') {
       return res.status(401).json({ error: 'Credenciales incorrectas.' })
     }
 
-    return res.json({ user: sanitizeUser(user) })
+    if (loginResult.type === 'verification_required') {
+      return res.status(403).json({
+        error: 'Debes verificar tu email antes de continuar.',
+        verificationRequired: true,
+      })
+    }
+
+    return res.json({
+      user: sanitizeUser(loginResult.user),
+      quota: quotaSnapshot(loginResult.user),
+    })
   } catch (error) {
     console.error('[Auth login] Error:', error.message)
     return res.status(500).json({ error: 'No se pudo iniciar sesion.' })
+  }
+})
+
+app.post('/api/auth/verify-email', async (req, res) => {
+  const { email, code } = req.body || {}
+  const normalizedEmail = normalizeEmail(email)
+  const normalizedCode = String(code || '').trim()
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (!normalizedCode) {
+    return res.status(400).json({ error: 'Codigo de verificacion requerido.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const user = normalizeUserRecord(users[index])
+      if (user.emailVerified) {
+        const activated = activateTrialIfEligible(user)
+        users[index] = activated
+        await writeUsers(users)
+        return { type: 'already_verified', user: activated }
+      }
+
+      const isExpired =
+        user.verificationExpiresAt && new Date(user.verificationExpiresAt).getTime() < Date.now()
+      if (isExpired) {
+        return { type: 'expired' }
+      }
+      if (user.verificationCode !== normalizedCode) {
+        return { type: 'invalid_code' }
+      }
+
+      user.emailVerified = true
+      user.verificationCode = ''
+      user.verificationExpiresAt = null
+
+      const activated = activateTrialIfEligible(user)
+      users[index] = activated
+      await writeUsers(users)
+      return { type: 'ok', user: activated }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'No existe una cuenta con ese email.' })
+    }
+    if (result.type === 'expired') {
+      return res.status(400).json({ error: 'El codigo de verificacion ha expirado.' })
+    }
+    if (result.type === 'invalid_code') {
+      return res.status(400).json({ error: 'Codigo de verificacion no valido.' })
+    }
+
+    return res.json({
+      user: sanitizeUser(result.user),
+      quota: quotaSnapshot(result.user),
+      message:
+        result.type === 'already_verified'
+          ? 'Tu email ya estaba verificado.'
+          : 'Email verificado correctamente.',
+    })
+  } catch (error) {
+    console.error('[Auth verify-email] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo verificar el email.' })
+  }
+})
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const { email } = req.body || {}
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const user = normalizeUserRecord(users[index])
+      if (user.emailVerified) {
+        return { type: 'already_verified', user }
+      }
+
+      user.verificationCode = generateNumericCode()
+      user.verificationExpiresAt = futureIsoByHours(24)
+      users[index] = user
+      await writeUsers(users)
+      return { type: 'ok', user }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'No existe una cuenta con ese email.' })
+    }
+
+    return res.json({
+      message:
+        result.type === 'already_verified'
+          ? 'Ese email ya esta verificado.'
+          : 'Codigo de verificacion reenviado.',
+      verification: {
+        required: result.type !== 'already_verified',
+        ...(authExposeCodes && result.type !== 'already_verified'
+          ? { code: result.user.verificationCode }
+          : {}),
+      },
+    })
+  } catch (error) {
+    console.error('[Auth resend-verification] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo reenviar el codigo de verificacion.' })
+  }
+})
+
+app.post('/api/auth/password-recovery/request', async (req, res) => {
+  const { email } = req.body || {}
+  const normalizedEmail = normalizeEmail(email)
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const user = normalizeUserRecord(users[index])
+      user.resetCode = generateNumericCode()
+      user.resetExpiresAt = futureIsoByMinutes(30)
+      users[index] = user
+      await writeUsers(users)
+      return { type: 'ok', user }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'No existe una cuenta con ese email.' })
+    }
+
+    return res.json({
+      message: 'Codigo de recuperacion enviado.',
+      reset: {
+        ...(authExposeCodes ? { code: result.user.resetCode } : {}),
+      },
+    })
+  } catch (error) {
+    console.error('[Auth password-recovery request] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo iniciar la recuperacion de contraseña.' })
+  }
+})
+
+app.post('/api/auth/password-recovery/confirm', async (req, res) => {
+  const { email, code, newPassword } = req.body || {}
+  const normalizedEmail = normalizeEmail(email)
+  const normalizedCode = String(code || '').trim()
+  const normalizedPassword = String(newPassword || '')
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (!normalizedCode) {
+    return res.status(400).json({ error: 'Codigo de recuperacion requerido.' })
+  }
+  if (normalizedPassword.length < 8) {
+    return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const user = normalizeUserRecord(users[index])
+      if (!user.resetCode || user.resetCode !== normalizedCode) {
+        return { type: 'invalid_code' }
+      }
+      if (user.resetExpiresAt && new Date(user.resetExpiresAt).getTime() < Date.now()) {
+        return { type: 'expired' }
+      }
+
+      const { hash, salt } = hashPassword(normalizedPassword)
+      user.passwordHash = hash
+      user.passwordSalt = salt
+      user.resetCode = ''
+      user.resetExpiresAt = null
+
+      users[index] = user
+      await writeUsers(users)
+      return { type: 'ok' }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'No existe una cuenta con ese email.' })
+    }
+    if (result.type === 'invalid_code') {
+      return res.status(400).json({ error: 'Codigo de recuperacion no valido.' })
+    }
+    if (result.type === 'expired') {
+      return res.status(400).json({ error: 'El codigo de recuperacion ha expirado.' })
+    }
+
+    return res.json({ message: 'Contraseña actualizada correctamente.' })
+  } catch (error) {
+    console.error('[Auth password-recovery confirm] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo actualizar la contraseña.' })
+  }
+})
+
+app.get('/api/auth/profile', async (req, res) => {
+  const normalizedEmail = normalizeEmail(req.query?.email)
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return null
+      }
+
+      const user = activateTrialIfEligible(users[index])
+      users[index] = user
+      await writeUsers(users)
+      return user
+    })
+
+    if (!result) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' })
+    }
+
+    return res.json({
+      user: sanitizeUser(result),
+      quota: quotaSnapshot(result),
+    })
+  } catch (error) {
+    console.error('[Auth profile] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo cargar el perfil.' })
+  }
+})
+
+app.post('/api/auth/consume-render', async (req, res) => {
+  const normalizedEmail = normalizeEmail(req.body?.email)
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const consumeResult = consumeUserRender(users[index])
+      users[index] = consumeResult.user
+      await writeUsers(users)
+      return { type: 'ok', ...consumeResult }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'Usuario no encontrado.' })
+    }
+
+    return res.json({
+      allowed: result.allowed,
+      message: result.message,
+      user: sanitizeUser(result.user),
+      quota: result.quota,
+    })
+  } catch (error) {
+    console.error('[Auth consume-render] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo procesar la cuota de renders.' })
+  }
+})
+
+app.post('/api/auth/activate-plan', async (req, res) => {
+  const normalizedEmail = normalizeEmail(req.body?.email)
+  const planId = String(req.body?.planId || '').trim()
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (!PLAN_IDS.includes(planId) || planId === 'free') {
+    return res.status(400).json({ error: 'Plan no valido para activacion.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const user = activateTrialIfEligible(users[index])
+      user.planId = planId
+      users[index] = user
+      await writeUsers(users)
+      return { type: 'ok', user }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'Usuario no encontrado.' })
+    }
+
+    return res.json({
+      user: sanitizeUser(result.user),
+      quota: quotaSnapshot(result.user),
+      message: `Plan ${planId.toUpperCase()} activado.`,
+    })
+  } catch (error) {
+    console.error('[Auth activate-plan] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudo activar el plan.' })
   }
 })
 
