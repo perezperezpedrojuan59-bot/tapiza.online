@@ -706,6 +706,7 @@ const BASE_MANUFACTURER_OPTIONS = [
   'GB Grup',
   'Tuva Textil',
 ]
+const ALL_COLLECTIONS_OPTION = 'Todas las colecciones'
 
 const FABRIC_TYPE_OPTIONS = [
   'Todos los tipos',
@@ -794,6 +795,7 @@ const detectColorFamily = (hexColor) => {
 const enrichFabric = (fabric, defaults = {}) => ({
   ...fabric,
   manufacturer: fabric.manufacturer || defaults.manufacturer || 'Froca',
+  collection: fabric.collection || defaults.collection || fabric.family || 'General',
   fabricType: fabric.fabricType || defaults.fabricType || 'Chenilla',
   pattern: fabric.pattern || defaults.pattern || 'Liso',
   colorFamily: fabric.colorFamily || detectColorFamily(fabric.color),
@@ -878,6 +880,11 @@ const FABRICS = [
   ...FROCA_FABRICS.map((fabric) =>
     enrichFabric(fabric, {
       manufacturer: 'Froca',
+      collection: fabric.family.includes('Acanto')
+        ? 'Acanto'
+        : fabric.family.includes('Balenciaga')
+          ? 'Balenciaga'
+          : 'Froca',
       fabricType: fabric.family === 'Froca Balenciaga' ? 'Jacquard' : 'Chenilla',
       pattern: 'Liso',
     }),
@@ -929,6 +936,7 @@ function App() {
   const [selectedFurniture, setSelectedFurniture] = useState(null)
   const [selectedFabric, setSelectedFabric] = useState(null)
   const [selectedManufacturer, setSelectedManufacturer] = useState('Todos los fabricantes')
+  const [selectedCollection, setSelectedCollection] = useState(ALL_COLLECTIONS_OPTION)
   const [selectedFabricType, setSelectedFabricType] = useState('Todos los tipos')
   const [selectedColorFamily, setSelectedColorFamily] = useState('Todos los colores')
   const [selectedPattern, setSelectedPattern] = useState('Todos los diseños')
@@ -1003,6 +1011,31 @@ function App() {
     ]
   }, [])
 
+  const collectionOptions = useMemo(() => {
+    const byCollection = new Map()
+    FABRICS.forEach((fabric) => {
+      const manufacturer = fabric.manufacturer || 'General'
+      const collection = fabric.collection || fabric.family || 'General'
+      const value = `${collection}::${manufacturer}`
+
+      if (!byCollection.has(value)) {
+        byCollection.set(value, {
+          value,
+          label: `${collection} (${manufacturer})`,
+        })
+      }
+    })
+
+    const sortedCollections = Array.from(byCollection.values()).sort((left, right) =>
+      left.label.localeCompare(right.label, 'es'),
+    )
+
+    return [
+      { value: ALL_COLLECTIONS_OPTION, label: ALL_COLLECTIONS_OPTION },
+      ...sortedCollections,
+    ]
+  }, [])
+
   const fabricTypeOptions = useMemo(() => {
     const availableTypes = Array.from(
       new Set(FABRICS.map((fabric) => fabric.fabricType).filter(Boolean)),
@@ -1036,6 +1069,9 @@ function App() {
         const manufacturerMatch =
           selectedManufacturer === 'Todos los fabricantes' ||
           fabric.manufacturer === selectedManufacturer
+        const collectionMatch =
+          selectedCollection === ALL_COLLECTIONS_OPTION ||
+          selectedCollection === `${fabric.collection}::${fabric.manufacturer}`
         const typeMatch =
           selectedFabricType === 'Todos los tipos' || fabric.fabricType === selectedFabricType
         const colorMatch =
@@ -1043,9 +1079,9 @@ function App() {
         const patternMatch =
           selectedPattern === 'Todos los diseños' || fabric.pattern === selectedPattern
 
-        return manufacturerMatch && typeMatch && colorMatch && patternMatch
+        return manufacturerMatch && collectionMatch && typeMatch && colorMatch && patternMatch
       }),
-    [selectedManufacturer, selectedFabricType, selectedColorFamily, selectedPattern],
+    [selectedManufacturer, selectedCollection, selectedFabricType, selectedColorFamily, selectedPattern],
   )
   const selectedFabricVisible = selectedFabric
     ? visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
@@ -1679,6 +1715,20 @@ function App() {
                     </label>
 
                     <label className="fabric-select-field">
+                      Colección
+                      <select
+                        value={selectedCollection}
+                        onChange={(event) => setSelectedCollection(event.target.value)}
+                      >
+                        {collectionOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="fabric-select-field">
                       Tipo de tela
                       <select
                         value={selectedFabricType}
@@ -1751,7 +1801,8 @@ function App() {
                         />
                         <strong>{fabric.name}</strong>
                         <small>
-                          {fabric.manufacturer} · {fabric.fabricType} · {fabric.pattern}
+                          {fabric.collection} ({fabric.manufacturer}) · {fabric.fabricType} ·{' '}
+                          {fabric.pattern}
                         </small>
                       </button>
                     ))}
