@@ -15,12 +15,13 @@
     <main class="app-layout">
       <aside class="panel controls">
         <section>
-          <h2>1) Carga una foto</h2>
+          <h2>1) Carga una foto o usa un ejemplo realista</h2>
           <input id="imageInput" type="file" accept="image/*" />
           <p class="hint">
             Sube una foto frontal del mueble para obtener un resultado m&aacute;s
             realista.
           </p>
+          <div id="sampleGrid" class="sample-grid" aria-label="Ejemplos de muebles"></div>
         </section>
 
         <section>
@@ -87,7 +88,10 @@
         <div class="canvas-wrapper">
           <canvas id="previewCanvas" width="960" height="640"></canvas>
           <div id="emptyState" class="empty-state">
-            <p>Carga una imagen para comenzar a tapizar virtualmente.</p>
+            <p>
+              Carga una imagen o elige un ejemplo realista para comenzar a
+              tapizar virtualmente.
+            </p>
           </div>
         </div>
       </section>

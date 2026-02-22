@@ -18,6 +18,7 @@ const showMaskInput = document.getElementById("showMask");
 const showOriginalInput = document.getElementById("showOriginal");
 const downloadBtn = document.getElementById("downloadBtn");
 const fabricGrid = document.getElementById("fabricGrid");
+const sampleGrid = document.getElementById("sampleGrid");
 const emptyState = document.getElementById("emptyState");
 
 const state = {
@@ -33,6 +34,7 @@ const state = {
   showOriginal: showOriginalInput.checked,
   undoStack: [],
   selectedFabricId: null,
+  selectedSampleId: null,
   hexCache: new Map(),
   baseImageData: null,
   patternTiles: createPatternTiles(),
@@ -55,8 +57,17 @@ const fabrics = [
   { id: "p-espiga", kind: "pattern", label: "Espiga", tileId: "espiga" },
 ];
 
+const furnitureSamples = [
+  { id: "cabecero", label: "Cabecero", src: "assets/samples/cabecero.jpg" },
+  { id: "silla", label: "Silla", src: "assets/samples/silla.jpg" },
+  { id: "sillon", label: "Sillon", src: "assets/samples/sillon.jpg" },
+  { id: "sofa", label: "Sofa", src: "assets/samples/sofa.jpg" },
+  { id: "puff", label: "Puff", src: "assets/samples/puff.jpg" },
+];
+
 state.selectedFabricId = fabrics[0].id;
 syncReadouts();
+renderSampleOptions();
 renderFabricOptions();
 resetCanvas();
 attachEvents();
@@ -101,8 +112,18 @@ function onImagePicked(event) {
   if (!file) {
     return;
   }
-
+  setActiveSample(null);
   const objectUrl = URL.createObjectURL(file);
+  loadImageIntoEditor(objectUrl, {
+    revokeObjectUrl: true,
+    errorMessage: "No se pudo cargar la imagen. Intenta con otro archivo.",
+  });
+}
+
+function loadImageIntoEditor(source, options = {}) {
+  const revokeObjectUrl = Boolean(options.revokeObjectUrl);
+  const errorMessage =
+    options.errorMessage || "No se pudo cargar la imagen seleccionada.";
   const img = new Image();
   img.onload = () => {
     const fitted = fitInBounds(img.naturalWidth, img.naturalHeight, MAX_IMAGE_SIDE);
@@ -118,13 +139,17 @@ function onImagePicked(event) {
     downloadBtn.disabled = false;
     state.undoStack = [];
     renderPreview();
-    URL.revokeObjectURL(objectUrl);
+    if (revokeObjectUrl) {
+      URL.revokeObjectURL(source);
+    }
   };
   img.onerror = () => {
-    URL.revokeObjectURL(objectUrl);
-    alert("No se pudo cargar la imagen. Intenta con otro archivo.");
+    if (revokeObjectUrl) {
+      URL.revokeObjectURL(source);
+    }
+    alert(errorMessage);
   };
-  img.src = objectUrl;
+  img.src = source;
 }
 
 function setupCanvases(width, height) {
@@ -403,6 +428,46 @@ function renderFabricOptions() {
       renderPreview();
     });
     fabricGrid.appendChild(item);
+  }
+}
+
+function renderSampleOptions() {
+  sampleGrid.innerHTML = "";
+
+  for (const sample of furnitureSamples) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "sample-option";
+    item.dataset.sampleId = sample.id;
+    item.classList.toggle("active", sample.id === state.selectedSampleId);
+
+    const image = document.createElement("img");
+    image.className = "sample-thumb";
+    image.src = sample.src;
+    image.alt = `Mueble de ejemplo: ${sample.label}`;
+    image.loading = "lazy";
+
+    const label = document.createElement("span");
+    label.className = "sample-label";
+    label.textContent = sample.label;
+
+    item.append(image, label);
+    item.addEventListener("click", () => {
+      setActiveSample(sample.id);
+      imageInput.value = "";
+      loadImageIntoEditor(sample.src, {
+        errorMessage: `No se pudo cargar el ejemplo de ${sample.label.toLowerCase()}.`,
+      });
+    });
+
+    sampleGrid.appendChild(item);
+  }
+}
+
+function setActiveSample(sampleId) {
+  state.selectedSampleId = sampleId;
+  for (const node of sampleGrid.children) {
+    node.classList.toggle("active", node.dataset.sampleId === sampleId);
   }
 }
 

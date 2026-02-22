@@ -146,6 +146,46 @@ button:disabled {
   gap: 0.5rem;
 }
 
+.sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 0.5rem;
+}
+
+.sample-option {
+  border: 2px solid #2e3a4d;
+  border-radius: 10px;
+  padding: 0;
+  background: #121925;
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+
+.sample-option:hover {
+  border-color: #4f6078;
+}
+
+.sample-option.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.sample-thumb {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: cover;
+  display: block;
+  border-bottom: 1px solid #2b3749;
+}
+
+.sample-label {
+  display: block;
+  font-size: 0.76rem;
+  color: #d3dced;
+  padding: 0.32rem 0.4rem 0.38rem;
+}
+
 .fabric-option {
   border: 2px solid #2e3a4d;
   border-radius: 10px;
