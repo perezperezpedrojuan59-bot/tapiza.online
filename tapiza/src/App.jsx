@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import './App.css'
 
 const assetUrl = (path) => {
@@ -6,134 +6,102 @@ const assetUrl = (path) => {
   return `${import.meta.env.BASE_URL}${cleanPath}`
 }
 
-const createFurnitureMask = (imageSrc) =>
-  new Promise((resolve) => {
-    if (typeof window === 'undefined') {
-      resolve(null)
-      return
-    }
+const clamp = (value, min = 0, max = 255) => Math.min(max, Math.max(min, value))
 
+const hexToRgb = (hexColor) => {
+  const cleaned = hexColor.replace('#', '')
+  return {
+    r: Number.parseInt(cleaned.slice(0, 2), 16),
+    g: Number.parseInt(cleaned.slice(2, 4), 16),
+    b: Number.parseInt(cleaned.slice(4, 6), 16),
+  }
+}
+
+const loadImage = (source) =>
+  new Promise((resolve, reject) => {
     const image = new Image()
-
-    image.onload = () => {
-      const width = image.naturalWidth
-      const height = image.naturalHeight
-
-      if (!width || !height) {
-        resolve(null)
-        return
-      }
-
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-
-      const context = canvas.getContext('2d', { willReadFrequently: true })
-      if (!context) {
-        resolve(null)
-        return
-      }
-
-      context.drawImage(image, 0, 0, width, height)
-      const imageData = context.getImageData(0, 0, width, height)
-      const pixels = imageData.data
-
-      const sampleStep = Math.max(1, Math.floor(Math.min(width, height) / 24))
-      let sampleRed = 0
-      let sampleGreen = 0
-      let sampleBlue = 0
-      let sampleCount = 0
-
-      const readPixel = (x, y) => {
-        const pixelIndex = (y * width + x) * 4
-        return [
-          pixels[pixelIndex],
-          pixels[pixelIndex + 1],
-          pixels[pixelIndex + 2],
-        ]
-      }
-
-      for (let x = 0; x < width; x += sampleStep) {
-        const top = readPixel(x, 0)
-        const bottom = readPixel(x, height - 1)
-        sampleRed += top[0] + bottom[0]
-        sampleGreen += top[1] + bottom[1]
-        sampleBlue += top[2] + bottom[2]
-        sampleCount += 2
-      }
-
-      for (let y = sampleStep; y < height - sampleStep; y += sampleStep) {
-        const left = readPixel(0, y)
-        const right = readPixel(width - 1, y)
-        sampleRed += left[0] + right[0]
-        sampleGreen += left[1] + right[1]
-        sampleBlue += left[2] + right[2]
-        sampleCount += 2
-      }
-
-      const backgroundRed = sampleRed / sampleCount
-      const backgroundGreen = sampleGreen / sampleCount
-      const backgroundBlue = sampleBlue / sampleCount
-
-      const alphaMask = new Uint8ClampedArray(width * height)
-
-      for (let pixel = 0; pixel < width * height; pixel += 1) {
-        const sourceIndex = pixel * 4
-        const red = pixels[sourceIndex]
-        const green = pixels[sourceIndex + 1]
-        const blue = pixels[sourceIndex + 2]
-
-        const redDiff = red - backgroundRed
-        const greenDiff = green - backgroundGreen
-        const blueDiff = blue - backgroundBlue
-        const distance = Math.sqrt(
-          redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff,
-        )
-
-        const maxChannel = Math.max(red, green, blue)
-        const minChannel = Math.min(red, green, blue)
-        const saturation = maxChannel - minChannel
-        const luminance = (red + green + blue) / 3
-
-        const looksLikeBackground =
-          distance < 36 ||
-          (luminance > 228 && saturation < 14 && distance < 64)
-
-        alphaMask[pixel] = looksLikeBackground ? 0 : 255
-      }
-
-      for (let y = 1; y < height - 1; y += 1) {
-        for (let x = 1; x < width - 1; x += 1) {
-          const current = y * width + x
-          if (alphaMask[current] === 0) continue
-
-          const nearOpaque =
-            (alphaMask[current - 1] > 0 ? 1 : 0) +
-            (alphaMask[current + 1] > 0 ? 1 : 0) +
-            (alphaMask[current - width] > 0 ? 1 : 0) +
-            (alphaMask[current + width] > 0 ? 1 : 0)
-
-          if (nearOpaque <= 1) {
-            alphaMask[current] = 0
-          }
-        }
-      }
-
-      for (let pixel = 0; pixel < width * height; pixel += 1) {
-        const sourceIndex = pixel * 4
-        pixels[sourceIndex] = 255
-        pixels[sourceIndex + 1] = 255
-        pixels[sourceIndex + 2] = 255
-        pixels[sourceIndex + 3] = alphaMask[pixel]
-      }
-
-      context.putImageData(imageData, 0, 0)
-      resolve(canvas.toDataURL('image/png'))
-    }
-
-    image.onerror = () => resolve(null)
-    image.src = imageSrc
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error(`Image load failed: ${source}`))
+    image.src = source
   })
+
+const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
+
+const renderFabricPreview = async (furnitureId, fabricHex) => {
+  const cutoutImage = await loadImage(cutoutPath(furnitureId))
+
+  const width = cutoutImage.naturalWidth || cutoutImage.width
+  const height = cutoutImage.naturalHeight || cutoutImage.height
+
+  const baseCanvas = document.createElement('canvas')
+  baseCanvas.width = width
+  baseCanvas.height = height
+  const baseContext = baseCanvas.getContext('2d', { willReadFrequently: true })
+  if (!baseContext) {
+    throw new Error('Unable to create preview canvas context')
+  }
+
+  baseContext.drawImage(cutoutImage, 0, 0, width, height)
+  const baseImageData = baseContext.getImageData(0, 0, width, height)
+  const sourcePixels = baseImageData.data
+
+  const outputImageData = baseContext.createImageData(width, height)
+  const outputPixels = outputImageData.data
+  const fabric = hexToRgb(fabricHex)
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4
+      const baseAlpha = sourcePixels[index + 3]
+      const alpha = baseAlpha
+
+      if (alpha <= 0) {
+        outputPixels[index + 3] = 0
+        continue
+      }
+
+      const sourceRed = sourcePixels[index]
+      const sourceGreen = sourcePixels[index + 1]
+      const sourceBlue = sourcePixels[index + 2]
+
+      const luminance = (0.299 * sourceRed + 0.587 * sourceGreen + 0.114 * sourceBlue) / 255
+
+      const weaveA = Math.sin(x * 0.085 + y * 0.028) * 0.065
+      const weaveB = Math.cos(y * 0.11 - x * 0.02) * 0.055
+      const pseudoNoiseSeed = Math.sin((x + 17) * 12.9898 + (y + 43) * 78.233) * 43758.5453
+      const pseudoNoise = pseudoNoiseSeed - Math.floor(pseudoNoiseSeed)
+      const grain = (pseudoNoise - 0.5) * 0.08
+      const texture = clamp(1 + weaveA + weaveB + grain, 0.74, 1.26)
+
+      const shading = 0.42 + luminance * 0.98
+
+      const tintedRed = clamp(fabric.r * shading * texture)
+      const tintedGreen = clamp(fabric.g * shading * texture)
+      const tintedBlue = clamp(fabric.b * shading * texture)
+
+      outputPixels[index] = clamp(tintedRed * 0.8 + sourceRed * 0.2)
+      outputPixels[index + 1] = clamp(tintedGreen * 0.8 + sourceGreen * 0.2)
+      outputPixels[index + 2] = clamp(tintedBlue * 0.8 + sourceBlue * 0.2)
+      outputPixels[index + 3] = alpha
+    }
+  }
+
+  baseContext.clearRect(0, 0, width, height)
+  baseContext.putImageData(outputImageData, 0, 0)
+
+  baseContext.globalCompositeOperation = 'multiply'
+  baseContext.globalAlpha = 0.2
+  baseContext.drawImage(cutoutImage, 0, 0, width, height)
+
+  baseContext.globalCompositeOperation = 'screen'
+  baseContext.globalAlpha = 0.1
+  baseContext.drawImage(cutoutImage, 0, 0, width, height)
+
+  baseContext.globalCompositeOperation = 'source-over'
+  baseContext.globalAlpha = 1
+
+  return baseCanvas.toDataURL('image/png')
+}
 
 const FURNITURE = [
   {
@@ -578,7 +546,9 @@ function App() {
   const [selectedShape, setSelectedShape] = useState('Todas las formas')
   const [selectedFurniture, setSelectedFurniture] = useState(null)
   const [selectedFabric, setSelectedFabric] = useState(null)
-  const [maskCache, setMaskCache] = useState({})
+  const [renderedPreviewSrc, setRenderedPreviewSrc] = useState('')
+  const [isApplyingFabric, setIsApplyingFabric] = useState(false)
+  const [renderError, setRenderError] = useState('')
   const [annualBilling, setAnnualBilling] = useState(false)
   const [renderStatus, setRenderStatus] = useState('')
 
@@ -598,40 +568,35 @@ function App() {
   )
 
   const selectedVisible = filteredFurniture.some((item) => item.id === selectedFurniture?.id)
-  const selectedMask = selectedFurniture ? maskCache[selectedFurniture.id] : null
-
-  useEffect(() => {
-    if (!selectedFurniture || selectedMask) return
-
-    let isCancelled = false
-    const furnitureId = selectedFurniture.id
-    const source = assetUrl(selectedFurniture.image)
-
-    createFurnitureMask(source).then((maskDataUrl) => {
-      if (!maskDataUrl || isCancelled) return
-
-      setMaskCache((previousCache) => {
-        if (previousCache[furnitureId]) return previousCache
-        return { ...previousCache, [furnitureId]: maskDataUrl }
-      })
-    })
-
-    return () => {
-      isCancelled = true
-    }
-  }, [selectedFurniture, selectedMask])
 
   const jumpTo = (id) => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
     setMobileMenuOpen(false)
   }
 
-  const applyFabric = () => {
+  const applyFabric = async () => {
     if (!selectedFurniture || !selectedFabric) return
 
-    setRenderStatus(
-      `Vista previa actualizada: ${selectedFurniture.name} + ${selectedFabric.name}.`,
-    )
+    setRenderError('')
+    setRenderStatus('')
+    setIsApplyingFabric(true)
+
+    try {
+      const renderedResult = await renderFabricPreview(
+        selectedFurniture.id,
+        selectedFabric.color,
+      )
+      setRenderedPreviewSrc(renderedResult)
+      setRenderStatus(
+        `Vista previa actualizada: ${selectedFurniture.name} + ${selectedFabric.name}.`,
+      )
+    } catch {
+      setRenderError(
+        'No se pudo renderizar la tela con precision. Prueba con otra tela o recarga.',
+      )
+    } finally {
+      setIsApplyingFabric(false)
+    }
   }
 
   const formatPrice = (plan) => {
@@ -642,7 +607,7 @@ function App() {
   }
 
   const year = new Date().getFullYear()
-  const canApply = Boolean(selectedFurniture && selectedFabric)
+  const canApply = Boolean(selectedFurniture && selectedFabric && !isApplyingFabric)
 
   return (
     <div className="app-shell">
@@ -834,6 +799,8 @@ function App() {
                         className={selectedFurniture?.id === item.id ? 'furniture-card selected' : 'furniture-card'}
                         onClick={() => {
                           setSelectedFurniture(item)
+                          setRenderedPreviewSrc('')
+                          setRenderError('')
                           setRenderStatus('')
                         }}
                       >
@@ -873,6 +840,8 @@ function App() {
                         className={selectedFabric?.id === fabric.id ? 'fabric-card active' : 'fabric-card'}
                         onClick={() => {
                           setSelectedFabric(fabric)
+                          setRenderedPreviewSrc('')
+                          setRenderError('')
                           setRenderStatus('')
                         }}
                       >
@@ -894,27 +863,11 @@ function App() {
 
                 <div className="preview-box">
                   {selectedFurniture ? (
-                    <>
-                      <img
-                        className="preview-furniture-image"
-                        src={assetUrl(selectedFurniture.image)}
-                        alt={selectedFurniture.name}
-                      />
-                      {selectedFabric ? (
-                        <div
-                          className="fabric-overlay"
-                          style={{
-                            backgroundColor: selectedFabric.color,
-                            ...(selectedMask
-                              ? {
-                                  maskImage: `url("${selectedMask}")`,
-                                  WebkitMaskImage: `url("${selectedMask}")`,
-                                }
-                              : {}),
-                          }}
-                        />
-                      ) : null}
-                    </>
+                    <img
+                      className="preview-furniture-image"
+                      src={renderedPreviewSrc || cutoutPath(selectedFurniture.id)}
+                      alt={selectedFurniture.name}
+                    />
                   ) : (
                     <div className="preview-placeholder">
                       <p>Selecciona un mueble para comenzar</p>
@@ -945,9 +898,10 @@ function App() {
                   disabled={!canApply}
                   onClick={applyFabric}
                 >
-                  Aplicar tela
+                  {isApplyingFabric ? 'Aplicando tela...' : 'Aplicar tela'}
                 </button>
 
+                {renderError ? <p className="render-error">{renderError}</p> : null}
                 {renderStatus ? <p className="render-status">{renderStatus}</p> : null}
               </div>
             </aside>
