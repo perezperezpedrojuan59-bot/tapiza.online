@@ -68,6 +68,15 @@ function attachEvents() {
     viewResultBtn.disabled = false;
     viewResultBtn.addEventListener("click", () => {
       if (!state.hasImage) {
+        const selectedSample = getSelectedSample();
+        if (selectedSample) {
+          // If the sample card is selected but not yet loaded, load it now and show result.
+          loadImageIntoEditor(selectedSample.src, {
+            startInOriginal: false,
+            errorMessage: `No se pudo cargar el ejemplo de ${selectedSample.label.toLowerCase()}.`,
+          });
+          return;
+        }
         alert("Primero carga una imagen del mueble.");
         return;
       }
@@ -150,6 +159,7 @@ function upsertCustomFabric(tile) {
 function loadImageIntoEditor(source, options = {}) {
   const revokeObjectUrl = Boolean(options.revokeObjectUrl);
   const errorMessage = options.errorMessage || "No se pudo cargar la imagen.";
+  const startInOriginal = options.startInOriginal !== false;
   const img = new Image();
 
   img.onload = () => {
@@ -159,9 +169,9 @@ function loadImageIntoEditor(source, options = {}) {
     baseCtx.drawImage(img, 0, 0, fitted.width, fitted.height);
     state.baseImageData = baseCtx.getImageData(0, 0, fitted.width, fitted.height);
     state.hasImage = true;
-    state.showOriginal = true;
+    state.showOriginal = startInOriginal;
     if (showOriginalInput) {
-      showOriginalInput.checked = true;
+      showOriginalInput.checked = startInOriginal;
     }
     emptyState.classList.add("hidden");
     downloadBtn.disabled = false;
@@ -942,6 +952,12 @@ function buildAcantoFabrics() {
 function getSelectedFabric() {
   return (
     state.fabrics.find((fabric) => fabric.id === state.selectedFabricId) || state.fabrics[0]
+  );
+}
+
+function getSelectedSample() {
+  return (
+    furnitureSamples.find((sample) => sample.id === state.selectedSampleId) || null
   );
 }
 
