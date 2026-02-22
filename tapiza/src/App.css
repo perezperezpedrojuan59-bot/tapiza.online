@@ -733,6 +733,27 @@
   margin-left: 0.3rem;
 }
 
+.payment-notice,
+.payment-error {
+  max-width: 760px;
+  margin: 0 auto 1rem;
+  border-radius: 0.7rem;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.9rem;
+}
+
+.payment-notice {
+  color: #14532d;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+}
+
+.payment-error {
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+}
+
 .switch {
   width: 2.6rem;
   height: 1.45rem;

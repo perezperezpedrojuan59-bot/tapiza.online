@@ -1,10 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 const assetUrl = (path) => {
   const cleanPath = String(path).replace(/^\/+/, '')
   return `${import.meta.env.BASE_URL}${cleanPath}`
 }
+
+const STRIPE_API_BASE_URL = (import.meta.env.VITE_STRIPE_API_BASE_URL || '').trim()
+
+const apiUrl = (path) =>
+  `${STRIPE_API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
 
 const clamp = (value, min = 0, max = 255) => Math.min(max, Math.max(min, value))
 
@@ -450,6 +455,7 @@ const FABRICS = [
 
 const PLANS = [
   {
+    id: 'free',
     name: 'Gratis',
     audience: 'Probadores',
     monthlyPrice: 0,
@@ -459,6 +465,7 @@ const PLANS = [
     features: ['5 renders/mes', 'Catalogo basico', 'Descarga de imagenes'],
   },
   {
+    id: 'basic',
     name: 'Basico',
     audience: 'Tapiceros autonomos',
     monthlyPrice: 19,
@@ -472,6 +479,7 @@ const PLANS = [
     ],
   },
   {
+    id: 'professional',
     name: 'Profesional',
     audience: 'Decoradores',
     monthlyPrice: 49,
@@ -487,6 +495,7 @@ const PLANS = [
     ],
   },
   {
+    id: 'business',
     name: 'Business',
     audience: 'Contract / Empresas',
     monthlyPrice: 99,
@@ -501,6 +510,7 @@ const PLANS = [
     ],
   },
   {
+    id: 'enterprise',
     name: 'Enterprise',
     audience: 'Grandes estudios',
     monthlyPrice: 249,
@@ -538,6 +548,17 @@ const CATALOG_CARDS = [
   },
 ]
 
+const formatCheckoutError = async (response) => {
+  try {
+    const body = await response.json()
+    if (body?.error) return body.error
+  } catch {
+    return 'No se pudo iniciar el checkout de Stripe.'
+  }
+
+  return 'No se pudo iniciar el checkout de Stripe.'
+}
+
 function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [activeTab, setActiveTab] = useState('furniture')
@@ -551,6 +572,27 @@ function App() {
   const [renderError, setRenderError] = useState('')
   const [annualBilling, setAnnualBilling] = useState(false)
   const [renderStatus, setRenderStatus] = useState('')
+  const [paymentNotice, setPaymentNotice] = useState('')
+  const [paymentError, setPaymentError] = useState('')
+  const [checkoutLoadingPlanId, setCheckoutLoadingPlanId] = useState('')
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const checkoutStatus = params.get('checkout')
+
+    if (checkoutStatus === 'success') {
+      setPaymentNotice('Pago confirmado. Tu suscripcion Stripe se ha iniciado correctamente.')
+      setPaymentError('')
+    } else if (checkoutStatus === 'cancelled') {
+      setPaymentNotice('Checkout cancelado. Puedes volver a intentarlo cuando quieras.')
+      setPaymentError('')
+    }
+
+    if (checkoutStatus) {
+      const cleanUrl = `${window.location.pathname}${window.location.hash || ''}`
+      window.history.replaceState({}, '', cleanUrl)
+    }
+  }, [])
 
   const filteredFurniture = useMemo(
     () =>
@@ -596,6 +638,45 @@ function App() {
       )
     } finally {
       setIsApplyingFabric(false)
+    }
+  }
+
+  const handlePlanCheckout = async (plan) => {
+    if (!plan || plan.id === 'free') {
+      setPaymentError('')
+      setPaymentNotice('Ya tienes disponible el plan gratis.')
+      return
+    }
+
+    setPaymentError('')
+    setPaymentNotice('')
+    setCheckoutLoadingPlanId(plan.id)
+
+    try {
+      const response = await fetch(apiUrl('/api/stripe/checkout-session'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId: plan.id,
+          billingCycle: annualBilling ? 'annual' : 'monthly',
+          origin: window.location.origin,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(await formatCheckoutError(response))
+      }
+
+      const payload = await response.json()
+      if (!payload?.url) {
+        throw new Error('Stripe no devolvio una URL de checkout valida.')
+      }
+
+      window.location.href = payload.url
+    } catch (error) {
+      setPaymentError(error.message || 'No se pudo iniciar el checkout de Stripe.')
+    } finally {
+      setCheckoutLoadingPlanId('')
     }
   }
 
@@ -954,6 +1035,9 @@ function App() {
             </span>
           </div>
 
+          {paymentNotice ? <p className="payment-notice">{paymentNotice}</p> : null}
+          {paymentError ? <p className="payment-error">{paymentError}</p> : null}
+
           <div className="plans-grid">
             {PLANS.map((plan) => (
               <article
@@ -978,8 +1062,13 @@ function App() {
                   ))}
                 </ul>
 
-                <button className={plan.popular ? 'btn btn-primary full-width' : 'btn btn-outline-dark full-width'} type="button">
-                  {plan.cta}
+                <button
+                  className={plan.popular ? 'btn btn-primary full-width' : 'btn btn-outline-dark full-width'}
+                  type="button"
+                  disabled={plan.id === 'free' || checkoutLoadingPlanId === plan.id}
+                  onClick={() => handlePlanCheckout(plan)}
+                >
+                  {checkoutLoadingPlanId === plan.id ? 'Abriendo checkout...' : plan.cta}
                 </button>
               </article>
             ))}
