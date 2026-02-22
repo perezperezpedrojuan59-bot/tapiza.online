@@ -33,6 +33,7 @@ const loadImage = (source) => {
 
   const promise = new Promise((resolve, reject) => {
     const image = new Image()
+    image.crossOrigin = 'anonymous'
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error(`Image load failed: ${source}`))
     image.src = source

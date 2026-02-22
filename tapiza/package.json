@@ -9,6 +9,7 @@
     "dev:full": "concurrently \"npm run dev:server\" \"npm run dev\"",
     "start:server": "node server/index.js",
     "build": "vite build",
+    "build:share": "npm run build && node scripts/generate_share_html.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
