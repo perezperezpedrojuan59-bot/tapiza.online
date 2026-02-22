@@ -178,6 +178,7 @@ const loadSwatchTexture = async (swatchPath) => {
 }
 
 const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
+const upholsteryMaskPath = (furnitureId) => assetUrl(`/images/upholstery-mask/${furnitureId}.png`)
 
 const createDefaultUpholsteryMask = async (furnitureId) => {
   const cutoutImage = await loadImage(cutoutPath(furnitureId))
@@ -206,6 +207,53 @@ const createDefaultUpholsteryMask = async (furnitureId) => {
 
   maskContext.putImageData(imageData, 0, 0)
   return maskCanvas.toDataURL('image/png')
+}
+
+const createInitialUpholsteryMask = async (furnitureId) => {
+  try {
+    const [cutoutImage, predefinedMaskImage] = await Promise.all([
+      loadImage(cutoutPath(furnitureId)),
+      loadImage(upholsteryMaskPath(furnitureId)),
+    ])
+
+    const width = cutoutImage.naturalWidth || cutoutImage.width
+    const height = cutoutImage.naturalHeight || cutoutImage.height
+    const maskCanvas = document.createElement('canvas')
+    maskCanvas.width = width
+    maskCanvas.height = height
+    const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true })
+    if (!maskContext) {
+      throw new Error('No se pudo crear la mascara inicial del mueble.')
+    }
+
+    maskContext.drawImage(predefinedMaskImage, 0, 0, width, height)
+    const maskImageData = maskContext.getImageData(0, 0, width, height)
+    const maskPixels = maskImageData.data
+
+    let hasTransparentPixels = false
+    for (let index = 3; index < maskPixels.length; index += 4) {
+      if (maskPixels[index] < 250) {
+        hasTransparentPixels = true
+        break
+      }
+    }
+
+    for (let index = 0; index < maskPixels.length; index += 4) {
+      const sourceAlpha = maskPixels[index + 3]
+      const luminance =
+        0.299 * maskPixels[index] + 0.587 * maskPixels[index + 1] + 0.114 * maskPixels[index + 2]
+
+      maskPixels[index] = 255
+      maskPixels[index + 1] = 255
+      maskPixels[index + 2] = 255
+      maskPixels[index + 3] = hasTransparentPixels ? sourceAlpha : clamp(luminance, 0, 255)
+    }
+
+    maskContext.putImageData(maskImageData, 0, 0)
+    return maskCanvas.toDataURL('image/png')
+  } catch {
+    return createDefaultUpholsteryMask(furnitureId)
+  }
 }
 
 const loadMaskPixels = async (maskDataUrl, width, height) => {
@@ -366,6 +414,15 @@ const FURNITURE = [
     shape: 'Recto/Moderno',
     type: 'Sofa',
     image: '/images/furniture/sofa-2plazas.png',
+  },
+  {
+    id: 'sofa-ideal-premium',
+    name: 'Sofa Ideal Tapiza',
+    category: 'Sofas',
+    style: 'Moderno',
+    shape: 'Recto/Moderno',
+    type: 'Sofa',
+    image: '/images/furniture/sofa-ideal-premium.png',
   },
   {
     id: 'sofa-3plazas',
@@ -818,7 +875,7 @@ function App() {
     const cachedMask = upholsteryMaskByFurnitureRef.current.get(furnitureId)
     if (cachedMask) return cachedMask
 
-    const generatedMask = await createDefaultUpholsteryMask(furnitureId)
+    const generatedMask = await createInitialUpholsteryMask(furnitureId)
     upholsteryMaskByFurnitureRef.current.set(furnitureId, generatedMask)
     return generatedMask
   }
@@ -977,7 +1034,7 @@ function App() {
     setMaskEditorError('')
     setMaskEditorBusy(true)
     try {
-      const defaultMask = await createDefaultUpholsteryMask(selectedFurniture.id)
+      const defaultMask = await createInitialUpholsteryMask(selectedFurniture.id)
       upholsteryMaskByFurnitureRef.current.set(selectedFurniture.id, defaultMask)
       setRenderedPreviewSrc('')
       setRenderStatus(
