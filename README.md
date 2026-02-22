@@ -63,6 +63,6 @@ Las fotos de muestra incluidas en `assets/samples/` provienen de Unsplash:
 
 - Cabecero: https://unsplash.com/photos/a-bed-with-a-fancy-headboard-in-a-bedroom-NNBnzeakKK0
 - Silla: https://unsplash.com/photos/a-chair-and-a-table-in-a-room-al0srakHkkY
-- Sillon: https://unsplash.com/photos/a-living-room-with-a-couch-and-a-chair-SZopk9CJYPs
-- Sofa: https://unsplash.com/photos/a-light-gray-sofa-with-decorative-pillows-and-a-throw-ctfG0jWA_y8
+- Sillon: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sillon-gris-london_sal38447s1-d-3.jpg
+- Sofa: https://sureste.dico.com.mx/media/catalog/product/cache/ddfdab190e55251eefb307178e423bf7/s/a/sala-moderna-sofa-gris-london_sal38445s1-d-1.jpg
 - Puff: https://unsplash.com/photos/a-living-room-with-a-large-window-and-a-white-ottoman-6DpsNbYFXMw
