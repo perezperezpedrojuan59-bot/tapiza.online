@@ -13,6 +13,12 @@ import {
   getPriceCents,
   resolveBillingCycle,
 } from './planCatalog.js'
+import {
+  PLAN_MAP,
+  SUBSCRIPTION_POLICY,
+  getPlanRenderLimit,
+  isPlanUnlimited,
+} from '../shared/plans.js'
 
 dotenv.config()
 
@@ -46,9 +52,11 @@ const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
 const authExposeCodes = process.env.AUTH_EXPOSE_CODES !== 'false'
 
-const TRIAL_DURATION_DAYS = 14
-const TRIAL_RENDER_LIMIT = 120
-const FREE_MONTHLY_RENDER_LIMIT = 5
+const TRIAL_DURATION_DAYS = SUBSCRIPTION_POLICY.trialDurationDays
+const TRIAL_RENDER_LIMIT = SUBSCRIPTION_POLICY.trialRenderLimit
+const FREE_MONTHLY_RENDER_LIMIT = SUBSCRIPTION_POLICY.freeMonthlyRenderLimit
+const VERIFICATION_CODE_EXPIRY_HOURS = SUBSCRIPTION_POLICY.emailVerificationCodeExpiryHours
+const PASSWORD_RESET_EXPIRY_MINUTES = SUBSCRIPTION_POLICY.passwordRecoveryCodeExpiryMinutes
 
 const monthPeriod = () => new Date().toISOString().slice(0, 7)
 const futureIsoByDays = (days) => {
@@ -67,8 +75,15 @@ const futureIsoByMinutes = (minutes) => {
   return date.toISOString()
 }
 const generateNumericCode = () => `${Math.floor(100000 + Math.random() * 900000)}`
+const getPlanName = (planId) => PLAN_MAP[planId]?.name || String(planId || 'Plan').toUpperCase()
+const finitePlanMonthlyLimit = (planId) => {
+  const limit = getPlanRenderLimit(planId)
+  return Number.isFinite(limit) ? Number(limit) : null
+}
 
 const normalizeUserRecord = (user) => {
+  const normalizedPlanId = user.planId || 'free'
+  const monthlyLimitByPlan = finitePlanMonthlyLimit(normalizedPlanId)
   const normalized = {
     ...user,
     id: user.id,
@@ -80,12 +95,14 @@ const normalizeUserRecord = (user) => {
     verificationExpiresAt: user.verificationExpiresAt || null,
     resetCode: String(user.resetCode || ''),
     resetExpiresAt: user.resetExpiresAt || null,
-    planId: user.planId || 'free',
+    planId: normalizedPlanId,
     trialStartedAt: user.trialStartedAt || null,
     trialEndsAt: user.trialEndsAt || null,
     trialRendersLimit: Number(user.trialRendersLimit || TRIAL_RENDER_LIMIT),
     trialRendersUsed: Number(user.trialRendersUsed || 0),
-    freeMonthlyRendersLimit: Number(user.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT),
+    freeMonthlyRendersLimit: Number(
+      monthlyLimitByPlan ?? user.freeMonthlyRendersLimit ?? FREE_MONTHLY_RENDER_LIMIT,
+    ),
     freeMonthlyRendersUsed: Number(user.freeMonthlyRendersUsed || 0),
     freeMonthlyPeriod: user.freeMonthlyPeriod || monthPeriod(),
   }
@@ -94,6 +111,13 @@ const normalizeUserRecord = (user) => {
   if (normalized.freeMonthlyPeriod !== period) {
     normalized.freeMonthlyPeriod = period
     normalized.freeMonthlyRendersUsed = 0
+  }
+
+  if (
+    monthlyLimitByPlan !== null &&
+    Number(normalized.freeMonthlyRendersLimit || 0) !== Number(monthlyLimitByPlan)
+  ) {
+    normalized.freeMonthlyRendersLimit = Number(monthlyLimitByPlan)
   }
 
   return normalized
@@ -128,10 +152,30 @@ const quotaSnapshot = (user) => {
     }
   }
   if (normalized.planId !== 'free') {
+    const planName = getPlanName(normalized.planId)
+    if (isPlanUnlimited(normalized.planId)) {
+      return {
+        state: 'paid_unlimited',
+        blocked: false,
+        message: `Plan ${planName} activo. Renders ilimitados.`,
+      }
+    }
+
+    const planMonthlyLimit = Number(
+      normalized.freeMonthlyRendersLimit || finitePlanMonthlyLimit(normalized.planId) || 0,
+    )
+    const remainingPaid = Math.max(0, planMonthlyLimit - Number(normalized.freeMonthlyRendersUsed || 0))
     return {
-      state: 'paid',
-      blocked: false,
-      message: `Plan ${normalized.planId.toUpperCase()} activo. Renders ilimitados.`,
+      state: 'paid_limited',
+      blocked: remainingPaid <= 0,
+      remaining: remainingPaid,
+      limit: planMonthlyLimit,
+      used: normalized.freeMonthlyRendersUsed,
+      period: normalized.freeMonthlyPeriod,
+      message:
+        remainingPaid > 0
+          ? `Plan ${planName}: te quedan ${remainingPaid} renders este mes.`
+          : `Has alcanzado el limite mensual de tu plan ${planName}.`,
     }
   }
   if (isTrialActive(normalized)) {
@@ -182,7 +226,7 @@ const consumeUserRender = (user) => {
   }
   if (before.state === 'trial') {
     normalized.trialRendersUsed = Number(normalized.trialRendersUsed || 0) + 1
-  } else if (before.state === 'free') {
+  } else if (before.state === 'free' || before.state === 'paid_limited') {
     normalized.freeMonthlyRendersUsed = Number(normalized.freeMonthlyRendersUsed || 0) + 1
   }
   const after = quotaSnapshot(normalized)
@@ -298,6 +342,12 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
               if (index < 0) return
               const user = activateTrialIfEligible(users[index])
               user.planId = planId
+              user.freeMonthlyPeriod = monthPeriod()
+              user.freeMonthlyRendersUsed = 0
+              const planLimit = finitePlanMonthlyLimit(planId)
+              if (planLimit !== null) {
+                user.freeMonthlyRendersLimit = planLimit
+              }
               users[index] = user
               await writeUsers(users)
             })
@@ -375,7 +425,7 @@ app.post('/api/auth/register', async (req, res) => {
         createdAt: new Date().toISOString(),
         emailVerified: false,
         verificationCode: generateNumericCode(),
-        verificationExpiresAt: futureIsoByHours(24),
+        verificationExpiresAt: futureIsoByHours(VERIFICATION_CODE_EXPIRY_HOURS),
         resetCode: '',
         resetExpiresAt: null,
         planId: 'free',
@@ -567,7 +617,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
       }
 
       user.verificationCode = generateNumericCode()
-      user.verificationExpiresAt = futureIsoByHours(24)
+      user.verificationExpiresAt = futureIsoByHours(VERIFICATION_CODE_EXPIRY_HOURS)
       users[index] = user
       await writeUsers(users)
       return { type: 'ok', user }
@@ -613,7 +663,7 @@ app.post('/api/auth/password-recovery/request', async (req, res) => {
 
       const user = normalizeUserRecord(users[index])
       user.resetCode = generateNumericCode()
-      user.resetExpiresAt = futureIsoByMinutes(30)
+      user.resetExpiresAt = futureIsoByMinutes(PASSWORD_RESET_EXPIRY_MINUTES)
       users[index] = user
       await writeUsers(users)
       return { type: 'ok', user }
@@ -786,6 +836,12 @@ app.post('/api/auth/activate-plan', async (req, res) => {
 
       const user = activateTrialIfEligible(users[index])
       user.planId = planId
+      user.freeMonthlyPeriod = monthPeriod()
+      user.freeMonthlyRendersUsed = 0
+      const planLimit = finitePlanMonthlyLimit(planId)
+      if (planLimit !== null) {
+        user.freeMonthlyRendersLimit = planLimit
+      }
       users[index] = user
       await writeUsers(users)
       return { type: 'ok', user }
@@ -798,7 +854,7 @@ app.post('/api/auth/activate-plan', async (req, res) => {
     return res.json({
       user: sanitizeUser(result.user),
       quota: quotaSnapshot(result.user),
-      message: `Plan ${planId.toUpperCase()} activado.`,
+      message: `Plan ${getPlanName(planId)} activado.`,
     })
   } catch (error) {
     console.error('[Auth activate-plan] Error:', error.message)

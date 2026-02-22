@@ -22,8 +22,13 @@ Aplicacion React + Vite inspirada en la web de referencia:
 - Flujo de monetizacion:
   - 1 render como invitado.
   - Registro y verificacion de email.
-  - Prueba Pro de 14 dias.
-  - Plan gratis mensual (5 renders/mes) o suscripcion de pago.
+  - Prueba Pro de 14 dias (60 renders).
+  - Plan free mensual (5 renders/mes) o suscripcion de pago.
+  - Planes de pago:
+    - Starter: 120 renders/mes
+    - Pro: 400 renders/mes
+    - Studio: 1500 renders/mes
+    - Enterprise: renders ilimitados
 
 ## Ejecutar en local
 

@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
+import {
+  ANNUAL_DISCOUNT_RATE,
+  PLAN_DEFINITIONS,
+  PLAN_MAP,
+  SUBSCRIPTION_POLICY,
+  getPlanRenderLimit,
+  isPlanUnlimited,
+} from '../shared/plans.js'
 import { FROCA_FABRICS, FROCA_FABRIC_COUNTS } from '../shared/frocaFabrics.js'
 import { STRIPE_PAYMENT_LINKS } from '../shared/stripePaymentLinks.js'
 import './App.css'
@@ -28,10 +35,12 @@ const AUTH_SESSION_STORAGE_KEY = 'tapiza.authSession.v1'
 const AUTH_PENDING_PLAN_STORAGE_KEY = 'tapiza.pendingPlan.v1'
 const GUEST_RENDER_USAGE_KEY = 'tapiza.guestRenderUsage.v1'
 
-const TRIAL_DURATION_DAYS = 14
-const TRIAL_RENDER_LIMIT = 120
-const FREE_MONTHLY_RENDER_LIMIT = 5
-const GUEST_RENDER_LIMIT = 1
+const TRIAL_DURATION_DAYS = SUBSCRIPTION_POLICY.trialDurationDays
+const TRIAL_RENDER_LIMIT = SUBSCRIPTION_POLICY.trialRenderLimit
+const FREE_MONTHLY_RENDER_LIMIT = SUBSCRIPTION_POLICY.freeMonthlyRenderLimit
+const GUEST_RENDER_LIMIT = SUBSCRIPTION_POLICY.guestRenderLimit
+const VERIFICATION_CODE_EXPIRY_HOURS = SUBSCRIPTION_POLICY.emailVerificationCodeExpiryHours
+const PASSWORD_RESET_EXPIRY_MINUTES = SUBSCRIPTION_POLICY.passwordRecoveryCodeExpiryMinutes
 
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const isEmailValid = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
@@ -44,11 +53,13 @@ const trialEndIso = () => {
   return date.toISOString()
 }
 
-const codeExpiryIso = (hours = 24) => {
+const codeExpiryIso = (hours = VERIFICATION_CODE_EXPIRY_HOURS) => {
   const date = new Date()
   date.setHours(date.getHours() + hours)
   return date.toISOString()
 }
+
+const getPlanName = (planId) => PLAN_MAP[planId]?.name || String(planId || 'Plan').toUpperCase()
 
 const hashPasswordInBrowser = async (password) => {
   const normalizedPassword = String(password || '')
@@ -84,7 +95,14 @@ const writeLocalUsers = (users) => {
   window.localStorage.setItem(AUTH_USERS_STORAGE_KEY, JSON.stringify(users))
 }
 
+const finitePlanMonthlyLimit = (planId) => {
+  const limit = getPlanRenderLimit(planId)
+  return Number.isFinite(limit) ? Number(limit) : null
+}
+
 const normalizeStoredUser = (user) => {
+  const normalizedPlanId = user.planId || 'free'
+  const monthlyLimitByPlan = finitePlanMonthlyLimit(normalizedPlanId)
   const normalized = {
     ...user,
     id: user.id,
@@ -93,12 +111,14 @@ const normalizeStoredUser = (user) => {
     createdAt: user.createdAt || new Date().toISOString(),
     provider: user.provider || 'local',
     emailVerified: Boolean(user.emailVerified),
-    planId: user.planId || 'free',
+    planId: normalizedPlanId,
     trialStartedAt: user.trialStartedAt || null,
     trialEndsAt: user.trialEndsAt || null,
     trialRendersLimit: Number(user.trialRendersLimit || TRIAL_RENDER_LIMIT),
     trialRendersUsed: Number(user.trialRendersUsed || 0),
-    freeMonthlyRendersLimit: Number(user.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT),
+    freeMonthlyRendersLimit: Number(
+      monthlyLimitByPlan ?? user.freeMonthlyRendersLimit ?? FREE_MONTHLY_RENDER_LIMIT,
+    ),
     freeMonthlyRendersUsed: Number(user.freeMonthlyRendersUsed || 0),
     freeMonthlyPeriod: user.freeMonthlyPeriod || currentMonthPeriod(),
     verificationCode: user.verificationCode || '',
@@ -112,6 +132,13 @@ const normalizeStoredUser = (user) => {
   if (normalized.freeMonthlyPeriod !== period) {
     normalized.freeMonthlyPeriod = period
     normalized.freeMonthlyRendersUsed = 0
+  }
+
+  if (
+    monthlyLimitByPlan !== null &&
+    Number(normalized.freeMonthlyRendersLimit || 0) !== Number(monthlyLimitByPlan)
+  ) {
+    normalized.freeMonthlyRendersLimit = Number(monthlyLimitByPlan)
   }
 
   return normalized
@@ -225,7 +252,7 @@ const registerLocalUser = async ({ name, email, password }) => {
     freeMonthlyRendersUsed: 0,
     freeMonthlyPeriod: currentMonthPeriod(),
     verificationCode: generateNumericCode(),
-    verificationExpiresAt: codeExpiryIso(24),
+    verificationExpiresAt: codeExpiryIso(VERIFICATION_CODE_EXPIRY_HOURS),
     resetCode: '',
     resetExpiresAt: null,
   }
@@ -318,7 +345,7 @@ const resendLocalVerificationCode = async ({ email }) => {
 
   const newCode = generateNumericCode()
   existingUser.verificationCode = newCode
-  existingUser.verificationExpiresAt = codeExpiryIso(24)
+  existingUser.verificationExpiresAt = codeExpiryIso(VERIFICATION_CODE_EXPIRY_HOURS)
   upsertLocalUser(existingUser)
   return {
     message: 'Código de verificación reenviado.',
@@ -334,7 +361,7 @@ const requestLocalPasswordReset = async ({ email }) => {
 
   const resetCode = generateNumericCode()
   const resetExpiry = new Date()
-  resetExpiry.setMinutes(resetExpiry.getMinutes() + 30)
+  resetExpiry.setMinutes(resetExpiry.getMinutes() + PASSWORD_RESET_EXPIRY_MINUTES)
 
   existingUser.resetCode = resetCode
   existingUser.resetExpiresAt = resetExpiry.toISOString()
@@ -435,10 +462,30 @@ const getUserQuotaSnapshot = (user) => {
   }
 
   if (normalized.planId && normalized.planId !== 'free') {
+    const planName = getPlanName(normalized.planId)
+    if (isPlanUnlimited(normalized.planId)) {
+      return {
+        state: 'paid_unlimited',
+        blocked: false,
+        message: `Plan ${planName} activo. Renders ilimitados.`,
+      }
+    }
+
+    const planMonthlyLimit = Number(
+      normalized.freeMonthlyRendersLimit || finitePlanMonthlyLimit(normalized.planId) || 0,
+    )
+    const remainingPaid = Math.max(0, planMonthlyLimit - Number(normalized.freeMonthlyRendersUsed || 0))
     return {
-      state: 'paid',
-      blocked: false,
-      message: `Plan ${normalized.planId.toUpperCase()} activo. Renders ilimitados.`,
+      state: 'paid_limited',
+      period: normalized.freeMonthlyPeriod,
+      limit: planMonthlyLimit,
+      used: normalized.freeMonthlyRendersUsed,
+      remaining: remainingPaid,
+      blocked: remainingPaid <= 0,
+      message:
+        remainingPaid > 0
+          ? `Plan ${planName}: te quedan ${remainingPaid} renders este mes.`
+          : `Has alcanzado el limite mensual de tu plan ${planName}.`,
     }
   }
 
@@ -525,7 +572,7 @@ const consumeLocalRenderQuota = async (user) => {
 
   if (quotaBefore.state === 'trial') {
     normalized.trialRendersUsed = Number(normalized.trialRendersUsed || 0) + 1
-  } else if (quotaBefore.state === 'free') {
+  } else if (quotaBefore.state === 'free' || quotaBefore.state === 'paid_limited') {
     normalized.freeMonthlyRendersUsed = Number(normalized.freeMonthlyRendersUsed || 0) + 1
   }
 
@@ -1887,6 +1934,12 @@ function App() {
       const localUser =
         readLocalUserByEmail(user.email) || normalizeStoredUser({ ...user, provider: 'local' })
       localUser.planId = planId
+      localUser.freeMonthlyPeriod = currentMonthPeriod()
+      localUser.freeMonthlyRendersUsed = 0
+      const planLimit = finitePlanMonthlyLimit(planId)
+      if (planLimit !== null) {
+        localUser.freeMonthlyRendersLimit = planLimit
+      }
       const savedUser = upsertLocalUser(localUser)
       const sanitized = sanitizeAuthUser({
         ...savedUser,
@@ -1939,7 +1992,7 @@ function App() {
 
         setPaymentNotice(
           activated
-            ? `Pago confirmado. Plan ${pendingPlan.planId.toUpperCase()} activado correctamente.`
+            ? `Pago confirmado. Plan ${getPlanName(pendingPlan.planId)} activado correctamente.`
             : 'Pago confirmado. Tu suscripcion Stripe se ha iniciado correctamente.',
         )
         setPaymentError('')
@@ -2431,8 +2484,10 @@ function App() {
         } else if (
           quotaResult.reason === 'trial' ||
           quotaResult.reason === 'free' ||
+          quotaResult.reason === 'paid_limited' ||
           quotaResult.quota?.state === 'trial' ||
-          quotaResult.quota?.state === 'free'
+          quotaResult.quota?.state === 'free' ||
+          quotaResult.quota?.state === 'paid_limited'
         ) {
           jumpTo('precios')
         }
@@ -2774,7 +2829,9 @@ function App() {
                   <strong>{activePlan?.name || 'Gratis'}</strong>
                   <p>
                     {currentUser.planId !== 'free'
-                      ? 'Suscripción activa con renders ilimitados.'
+                      ? isPlanUnlimited(currentUser.planId)
+                        ? 'Suscripcion activa con renders ilimitados.'
+                        : `Suscripcion activa con cupo mensual de ${currentUser.freeMonthlyRendersLimit} renders.`
                       : trialDaysLeft > 0
                         ? `Prueba Pro activa (${trialDaysLeft} días restantes).`
                         : 'Plan gratis mensual activo.'}
@@ -2801,9 +2858,9 @@ function App() {
                 >
                   Recuperar contraseña
                 </button>
-                {currentUser.planId === 'free' ? (
+                {currentUser.planId === 'free' || !isPlanUnlimited(currentUser.planId) ? (
                   <button className="btn btn-primary" type="button" onClick={() => jumpTo('precios')}>
-                    Mejorar plan
+                    {currentUser.planId === 'free' ? 'Mejorar plan' : 'Subir de plan'}
                   </button>
                 ) : null}
               </div>
@@ -2811,8 +2868,9 @@ function App() {
           ) : (
             <div className="profile-card guest">
               <p>
-                Empieza con 1 render invitado, activa 14 días de prueba Pro al verificar tu email
-                y luego decide si quieres pasar a un plan de pago.
+                Empieza con {GUEST_RENDER_LIMIT} render invitado, activa {TRIAL_DURATION_DAYS} dias de
+                prueba Pro ({TRIAL_RENDER_LIMIT} renders) al verificar tu email y luego decide si
+                quieres pasar a un plan de pago.
               </p>
               <div className="profile-actions">
                 <button className="btn btn-primary" type="button" onClick={() => openAuthModal('register')}>
@@ -3270,8 +3328,10 @@ function App() {
             </p>
           </div>
           <p className="payment-notice">
-            Flujo activo: 1 render invitado - registro - verificacion de email - 14 dias de
-            prueba Pro - plan gratis (5 renders/mes) o suscripcion.
+            Flujo activo: {GUEST_RENDER_LIMIT} render invitado - registro - verificacion de email
+            - {TRIAL_DURATION_DAYS} dias de prueba Pro ({TRIAL_RENDER_LIMIT} renders) - plan{' '}
+            {PLAN_MAP.free?.name || 'Free'}
+            ({FREE_MONTHLY_RENDER_LIMIT} renders/mes) o suscripcion.
           </p>
 
           <div className="billing-toggle">

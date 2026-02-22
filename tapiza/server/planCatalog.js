@@ -8,6 +8,7 @@ export const PLAN_CATALOG = Object.fromEntries(
       name: plan.name,
       description: plan.description,
       monthlyPriceCents: Math.round(plan.monthlyPrice * 100),
+      monthlyRenderLimit: plan.monthlyRenderLimit,
       free: plan.monthlyPrice <= 0,
     },
   ]),

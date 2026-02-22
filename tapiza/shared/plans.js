@@ -1,43 +1,60 @@
 export const ANNUAL_DISCOUNT_RATE = 0.2
 
+export const SUBSCRIPTION_POLICY = {
+  guestRenderLimit: 1,
+  trialDurationDays: 14,
+  trialRenderLimit: 60,
+  freeMonthlyRenderLimit: 5,
+  emailVerificationCodeExpiryHours: 24,
+  passwordRecoveryCodeExpiryMinutes: 30,
+}
+
 export const PLAN_DEFINITIONS = [
   {
     id: 'free',
-    name: 'Gratis',
-    audience: 'Probadores',
+    name: 'Free',
+    audience: 'Inicio',
     monthlyPrice: 0,
     current: true,
     icon: 'FREE',
     cta: 'Plan actual',
-    description: 'Plan de prueba sin suscripcion.',
-    features: ['5 renders/mes', 'Catalogo basico', 'Descarga de imagenes'],
+    monthlyRenderLimit: SUBSCRIPTION_POLICY.freeMonthlyRenderLimit,
+    description: 'Para probar la plataforma con un ritmo mensual controlado.',
+    features: [
+      `${SUBSCRIPTION_POLICY.freeMonthlyRenderLimit} renders/mes`,
+      'Catalogo basico',
+      '1 usuario',
+      'Exportacion estandar',
+    ],
   },
   {
     id: 'basic',
-    name: 'Basico',
+    name: 'Starter',
     audience: 'Tapiceros autonomos',
     monthlyPrice: 19,
     icon: 'BASIC',
     cta: 'Suscribirse',
-    description: 'Tapiceros autonomos.',
+    monthlyRenderLimit: 120,
+    description: 'Ideal para profesionales individuales que quieren velocidad y control.',
     features: [
-      '50 renders/mes',
+      '120 renders/mes',
       'Catalogo completo',
-      'Subir 5 telas propias',
+      'Subir 15 telas propias',
       'Soporte por email',
     ],
   },
   {
     id: 'professional',
-    name: 'Profesional',
+    name: 'Pro',
     audience: 'Decoradores',
     monthlyPrice: 49,
     popular: true,
     icon: 'PRO',
     cta: 'Suscribirse',
-    description: 'Decoradores y estudios de interiorismo.',
+    monthlyRenderLimit: 400,
+    description: 'Pensado para interioristas que gestionan multiples proyectos al mes.',
     features: [
-      '200 renders/mes',
+      '400 renders/mes',
       'Subir muebles y telas',
       'Marcas favoritas',
       'Historial de proyectos',
@@ -46,16 +63,17 @@ export const PLAN_DEFINITIONS = [
   },
   {
     id: 'business',
-    name: 'Business',
+    name: 'Studio',
     audience: 'Contract / Empresas',
     monthlyPrice: 99,
     icon: 'BIZ',
     cta: 'Suscribirse',
-    description: 'Equipos contract y empresas.',
+    monthlyRenderLimit: 1500,
+    description: 'Para estudios y equipos comerciales con carga intensiva.',
     features: [
-      'Renders ilimitados',
+      '1.500 renders/mes',
       'API access',
-      'Multi-usuario (5)',
+      'Multi-usuario (10)',
       'Brand customization',
       'Soporte dedicado',
     ],
@@ -67,13 +85,14 @@ export const PLAN_DEFINITIONS = [
     monthlyPrice: 249,
     icon: 'ENT',
     cta: 'Suscribirse',
-    description: 'Grandes estudios con soporte dedicado.',
+    monthlyRenderLimit: null,
+    description: 'Grandes estudios con soporte dedicado y SLA empresarial.',
     features: [
-      'Todo lo de Business',
+      'Todo lo de Studio',
+      'Renders ilimitados',
       'SLA garantizado',
       'Integraciones custom',
       'Account manager',
-      'Onboarding personalizado',
     ],
   },
 ]
@@ -81,3 +100,14 @@ export const PLAN_DEFINITIONS = [
 export const PLAN_MAP = Object.fromEntries(
   PLAN_DEFINITIONS.map((plan) => [plan.id, plan]),
 )
+
+export const getPlanById = (planId) => PLAN_MAP[planId] || PLAN_MAP.free
+
+export const getPlanRenderLimit = (planId) => {
+  const plan = getPlanById(planId)
+  if (typeof plan.monthlyRenderLimit === 'number') return plan.monthlyRenderLimit
+  if (plan.monthlyRenderLimit === null) return null
+  return SUBSCRIPTION_POLICY.freeMonthlyRenderLimit
+}
+
+export const isPlanUnlimited = (planId) => getPlanRenderLimit(planId) === null
