@@ -701,6 +701,38 @@ const sampleBilinearRgb = (pixels, width, height, x, y) => {
   }
 }
 
+const DEFAULT_TEXTURE_SAMPLING = Object.freeze({
+  xScale: 0.24,
+  yScale: 0.24,
+  xSkew: 0.048,
+  ySkew: 0.038,
+})
+
+const BALENCIAGA_TEXTURE_SAMPLING = Object.freeze({
+  xScale: 0.52,
+  yScale: 0.52,
+  xSkew: 0.104,
+  ySkew: 0.082,
+})
+
+const getTextureSamplingConfig = (fabricSelection) => {
+  const family = String(fabricSelection?.family || '').toLowerCase()
+  const collection = String(fabricSelection?.collection || '').toLowerCase()
+  const id = String(fabricSelection?.id || '').toLowerCase()
+  const fabricType = String(fabricSelection?.fabricType || '').toLowerCase()
+
+  if (
+    family.includes('balenciaga') ||
+    collection.includes('balenciaga') ||
+    id.startsWith('balenciaga-') ||
+    (fabricType === 'jacquard' && (family.includes('froca') || collection.includes('froca')))
+  ) {
+    return BALENCIAGA_TEXTURE_SAMPLING
+  }
+
+  return DEFAULT_TEXTURE_SAMPLING
+}
+
 const loadSwatchTexture = async (swatchPath) => {
   const swatchUrl = assetUrl(swatchPath)
   const cached = swatchTextureCache.get(swatchUrl)
@@ -1004,6 +1036,7 @@ const renderFabricPreview = async (furnitureId, fabricSelection, upholsteryMaskD
     height,
   )
   const smoothingStrength = 1 / Math.max(3, kernelDiameter)
+  const textureSampling = getTextureSamplingConfig(fabricSelection)
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -1037,8 +1070,8 @@ const renderFabricPreview = async (furnitureId, fabricSelection, upholsteryMaskD
       let microRelief = 0
 
       if (swatchTexture) {
-        const textureX = x * 0.17 + y * 0.035
-        const textureY = y * 0.17 - x * 0.028
+        const textureX = x * textureSampling.xScale + y * textureSampling.xSkew
+        const textureY = y * textureSampling.yScale - x * textureSampling.ySkew
         const sample = sampleBilinearRgb(
           swatchTexture.pixels,
           swatchTexture.width,
@@ -1054,9 +1087,10 @@ const renderFabricPreview = async (furnitureId, fabricSelection, upholsteryMaskD
         const sampleLuminance = (0.299 * sample.r + 0.587 * sample.g + 0.114 * sample.b) / 255
         microRelief = (sampleLuminance - 0.5) * 0.22
       } else {
-        const weaveA = Math.sin((x + y * 0.32) * 0.033) * 0.024
-        const weaveB = Math.cos((y - x * 0.22) * 0.037) * 0.02
-        const weaveC = Math.sin(x * 0.012 + y * 0.016) * 0.016
+        const proceduralFrequency = textureSampling.xScale / DEFAULT_TEXTURE_SAMPLING.xScale
+        const weaveA = Math.sin((x + y * 0.32) * 0.033 * proceduralFrequency) * 0.024
+        const weaveB = Math.cos((y - x * 0.22) * 0.037 * proceduralFrequency) * 0.02
+        const weaveC = Math.sin((x * 0.012 + y * 0.016) * proceduralFrequency) * 0.016
         const proceduralTexture = clamp(1 + weaveA + weaveB + weaveC, 0.92, 1.08)
         textureRed = clamp(fabric.r * proceduralTexture)
         textureGreen = clamp(fabric.g * proceduralTexture)
