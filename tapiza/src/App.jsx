@@ -986,11 +986,11 @@ const FURNITURE = [
   },
   {
     id: 'otomana-clasica',
-    name: 'Otomana Clasica',
-    category: 'Ottomanas',
+    name: 'Sillon Clasico Capitone',
+    category: 'Sillones',
     style: 'Clasico/Vintage',
     shape: 'Curvo/Redondeado',
-    type: 'Otomana',
+    type: 'Sillon',
     image: '/images/furniture/otomana-clasica.png',
   },
   {
@@ -1004,11 +1004,11 @@ const FURNITURE = [
   },
   {
     id: 'chaise-longue',
-    name: 'Chaise Longue Elegante',
-    category: 'Chaise Longue',
+    name: 'Sillon Moderno',
+    category: 'Sillones',
     style: 'Moderno',
-    shape: 'Curvo/Redondeado',
-    type: 'Chaise',
+    shape: 'Recto/Moderno',
+    type: 'Sillon',
     image: '/images/furniture/chaise-longue.png',
   },
   {
@@ -1025,8 +1025,6 @@ const FURNITURE = [
 const CATEGORIES = [
   'Todos',
   'Sillones',
-  'Chaise Longue',
-  'Ottomanas',
   'Cabeceros',
   'Cojines',
 ]
