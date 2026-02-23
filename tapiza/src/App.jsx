@@ -985,6 +985,15 @@ const FURNITURE = [
     image: '/images/furniture/sillon-escandinavo.png',
   },
   {
+    id: 'sofa-2plazas',
+    name: 'Sofa 2 Plazas',
+    category: 'Sofas',
+    style: 'Moderno',
+    shape: 'Recto/Moderno',
+    type: 'Sofa',
+    image: '/images/furniture/sofa-2plazas.png',
+  },
+  {
     id: 'otomana-clasica',
     name: 'Sillon Clasico Capitone',
     category: 'Sillones',
@@ -1024,6 +1033,7 @@ const FURNITURE = [
 
 const CATEGORIES = [
   'Todos',
+  'Sofas',
   'Sillones',
   'Cabeceros',
   'Cojines',
