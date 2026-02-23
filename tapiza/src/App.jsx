@@ -749,6 +749,135 @@ const loadSwatchTexture = async (swatchPath) => {
 const cutoutPath = (furnitureId) => assetUrl(`/images/furniture-cutout/${furnitureId}.png`)
 const upholsteryMaskPath = (furnitureId) => assetUrl(`/images/upholstery-mask/${furnitureId}.png`)
 
+const PRELOADED_EXAMPLE_UPHOLSTERY_ZONES = {
+  bergere: [
+    { type: 'roundedRect', x: 0.34, y: 0.13, width: 0.4, height: 0.36, radius: 0.14 },
+    { type: 'roundedRect', x: 0.13, y: 0.42, width: 0.66, height: 0.2, radius: 0.16 },
+    { type: 'roundedRect', x: 0.13, y: 0.61, width: 0.66, height: 0.11, radius: 0.16 },
+    { type: 'ellipse', cx: 0.25, cy: 0.38, rx: 0.09, ry: 0.05 },
+    { type: 'ellipse', cx: 0.76, cy: 0.39, rx: 0.08, ry: 0.05 },
+  ],
+  'sillon-escandinavo': [
+    { type: 'roundedRect', x: 0.15, y: 0.09, width: 0.37, height: 0.36, radius: 0.14 },
+    { type: 'roundedRect', x: 0.27, y: 0.38, width: 0.56, height: 0.29, radius: 0.16 },
+    { type: 'roundedRect', x: 0.2, y: 0.42, width: 0.27, height: 0.14, radius: 0.12 },
+  ],
+  'sofa-2plazas': [
+    { type: 'roundedRect', x: 0.43, y: 0.4, width: 0.31, height: 0.45, radius: 0.07 },
+    { type: 'roundedRect', x: 0.49, y: 0.37, width: 0.19, height: 0.11, radius: 0.12 },
+  ],
+  'otomana-clasica': [
+    { type: 'roundedRect', x: 0.0, y: 0.41, width: 0.6, height: 0.55, radius: 0.14 },
+    { type: 'roundedRect', x: 0.54, y: 0.36, width: 0.46, height: 0.56, radius: 0.14 },
+    { type: 'roundedRect', x: 0.21, y: 0.55, width: 0.2, height: 0.14, radius: 0.09 },
+    { type: 'roundedRect', x: 0.66, y: 0.48, width: 0.35, height: 0.18, radius: 0.09 },
+  ],
+  'cabecero-simple': [{ type: 'roundedRect', x: 0.08, y: 0.17, width: 0.84, height: 0.39, radius: 0.08 }],
+  'chaise-longue': [
+    { type: 'roundedRect', x: 0.06, y: 0.64, width: 0.66, height: 0.21, radius: 0.15 },
+    { type: 'roundedRect', x: 0.1, y: 0.58, width: 0.56, height: 0.11, radius: 0.15 },
+    { type: 'ellipse', cx: 0.16, cy: 0.69, rx: 0.07, ry: 0.06 },
+    { type: 'ellipse', cx: 0.37, cy: 0.69, rx: 0.08, ry: 0.05 },
+  ],
+  'cojin-cuadrado': [{ type: 'roundedRect', x: 0.06, y: 0.07, width: 0.88, height: 0.88, radius: 0.11 }],
+}
+
+const clampUnit = (value) => Math.min(1, Math.max(0, Number(value) || 0))
+
+const drawRoundedRectPath = (context, x, y, width, height, radius) => {
+  const safeWidth = Math.max(0, width)
+  const safeHeight = Math.max(0, height)
+  const maxRadius = Math.min(safeWidth / 2, safeHeight / 2)
+  const safeRadius = Math.max(0, Math.min(radius, maxRadius))
+
+  context.beginPath()
+  context.moveTo(x + safeRadius, y)
+  context.lineTo(x + safeWidth - safeRadius, y)
+  context.quadraticCurveTo(x + safeWidth, y, x + safeWidth, y + safeRadius)
+  context.lineTo(x + safeWidth, y + safeHeight - safeRadius)
+  context.quadraticCurveTo(x + safeWidth, y + safeHeight, x + safeWidth - safeRadius, y + safeHeight)
+  context.lineTo(x + safeRadius, y + safeHeight)
+  context.quadraticCurveTo(x, y + safeHeight, x, y + safeHeight - safeRadius)
+  context.lineTo(x, y + safeRadius)
+  context.quadraticCurveTo(x, y, x + safeRadius, y)
+  context.closePath()
+}
+
+const drawPresetMaskZone = (context, zone, width, height) => {
+  if (!zone || !context) return
+
+  if (zone.type === 'ellipse') {
+    const radiusX = clampUnit(zone.rx) * width
+    const radiusY = clampUnit(zone.ry) * height
+    if (radiusX <= 0 || radiusY <= 0) return
+
+    context.beginPath()
+    context.ellipse(clampUnit(zone.cx) * width, clampUnit(zone.cy) * height, radiusX, radiusY, 0, 0, Math.PI * 2)
+    context.fill()
+    return
+  }
+
+  const zoneX = clampUnit(zone.x) * width
+  const zoneY = clampUnit(zone.y) * height
+  const zoneWidth = clampUnit(zone.width) * width
+  const zoneHeight = clampUnit(zone.height) * height
+  if (zoneWidth <= 0 || zoneHeight <= 0) return
+
+  const radius = Math.min(zoneWidth, zoneHeight) * clampUnit(zone.radius)
+  drawRoundedRectPath(context, zoneX, zoneY, zoneWidth, zoneHeight, radius)
+  context.fill()
+}
+
+const createPreloadedExampleMask = async (furnitureId) => {
+  const zones = PRELOADED_EXAMPLE_UPHOLSTERY_ZONES[furnitureId]
+  if (!zones?.length) return null
+
+  const cutoutImage = await loadImage(cutoutPath(furnitureId))
+  const width = cutoutImage.naturalWidth || cutoutImage.width
+  const height = cutoutImage.naturalHeight || cutoutImage.height
+  if (!width || !height) return null
+
+  const maskCanvas = document.createElement('canvas')
+  maskCanvas.width = width
+  maskCanvas.height = height
+  const maskContext = maskCanvas.getContext('2d', { willReadFrequently: true })
+  if (!maskContext) return null
+
+  maskContext.fillStyle = '#ffffff'
+  zones.forEach((zone) => drawPresetMaskZone(maskContext, zone, width, height))
+
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = width
+  sourceCanvas.height = height
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
+  if (!sourceContext) return null
+
+  sourceContext.drawImage(cutoutImage, 0, 0, width, height)
+  const sourcePixels = sourceContext.getImageData(0, 0, width, height).data
+  const maskImageData = maskContext.getImageData(0, 0, width, height)
+  const maskPixels = maskImageData.data
+
+  for (let index = 0; index < maskPixels.length; index += 4) {
+    if (sourcePixels[index + 3] <= 6) {
+      maskPixels[index] = 0
+      maskPixels[index + 1] = 0
+      maskPixels[index + 2] = 0
+      maskPixels[index + 3] = 0
+      continue
+    }
+
+    if (maskPixels[index + 3] <= 6) continue
+
+    maskPixels[index] = 255
+    maskPixels[index + 1] = 255
+    maskPixels[index + 2] = 255
+    maskPixels[index + 3] = 255
+  }
+
+  maskContext.putImageData(maskImageData, 0, 0)
+  return maskCanvas.toDataURL('image/png')
+}
+
 const createDefaultUpholsteryMask = async (furnitureId) => {
   const cutoutImage = await loadImage(cutoutPath(furnitureId))
   const width = cutoutImage.naturalWidth || cutoutImage.width
@@ -779,6 +908,13 @@ const createDefaultUpholsteryMask = async (furnitureId) => {
 }
 
 const createInitialUpholsteryMask = async (furnitureId) => {
+  try {
+    const preloadedMask = await createPreloadedExampleMask(furnitureId)
+    if (preloadedMask) return preloadedMask
+  } catch {
+    // If a preset cannot be generated, keep fallback behavior.
+  }
+
   try {
     const [cutoutImage, predefinedMaskImage] = await Promise.all([
       loadImage(cutoutPath(furnitureId)),
