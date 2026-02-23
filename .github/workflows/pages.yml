@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - cursor/nueva-aplicaci-n-web-1de3
+      - cursor/tapiza-online-proyecto-2d35
   workflow_dispatch:
 
 permissions:
