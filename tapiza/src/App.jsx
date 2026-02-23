@@ -2653,7 +2653,7 @@ function App() {
 
         <section id="mi-diseno" className="section-space">
           <div className="section-title">
-            <h2>Disena tu tapizado</h2>
+            <h2>Diseña tu tapizado</h2>
             <p>
               Selecciona un mueble del catalogo o sube tu propia imagen. Elige la tela
               perfecta y visualiza el resultado al instante.
