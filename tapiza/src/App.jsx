@@ -611,6 +611,7 @@ const hexToRgb = (hexColor) => {
 
 const imageCache = new Map()
 const swatchTextureCache = new Map()
+const swatchPreviewVisibilityCache = new Set()
 
 const loadImage = (source) => {
   const cached = imageCache.get(source)
@@ -743,6 +744,81 @@ const getTextureSamplingConfig = (fabricSelection) => {
   }
 
   return DEFAULT_TEXTURE_SAMPLING
+}
+
+const SWATCH_PREVIEW_OBSERVER_MARGIN = '240px 0px'
+
+const LazyFabricSwatch = ({ fabric, isSelected }) => {
+  const swatchRef = useRef(null)
+  const hasSwatch = Boolean(fabric?.swatch)
+  const fabricId = String(fabric?.id || '')
+  const isAlreadyVisible = swatchPreviewVisibilityCache.has(fabricId)
+  const [shouldLoadSwatch, setShouldLoadSwatch] = useState(
+    () => !hasSwatch || isSelected || isAlreadyVisible,
+  )
+
+  useEffect(() => {
+    if (!hasSwatch) {
+      setShouldLoadSwatch(true)
+      return
+    }
+
+    if (isSelected || swatchPreviewVisibilityCache.has(fabricId)) {
+      swatchPreviewVisibilityCache.add(fabricId)
+      setShouldLoadSwatch(true)
+    }
+  }, [fabricId, hasSwatch, isSelected])
+
+  useEffect(() => {
+    if (!hasSwatch || shouldLoadSwatch) return undefined
+    if (typeof window === 'undefined' || !window.IntersectionObserver) {
+      swatchPreviewVisibilityCache.add(fabricId)
+      setShouldLoadSwatch(true)
+      return undefined
+    }
+
+    const swatchNode = swatchRef.current
+    if (!swatchNode) return undefined
+
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        const [entry] = entries
+        if (!entry) return
+        if (!entry.isIntersecting && entry.intersectionRatio <= 0) return
+
+        swatchPreviewVisibilityCache.add(fabricId)
+        setShouldLoadSwatch(true)
+        observer.disconnect()
+      },
+      {
+        root: null,
+        rootMargin: SWATCH_PREVIEW_OBSERVER_MARGIN,
+        threshold: 0.01,
+      },
+    )
+
+    observer.observe(swatchNode)
+    return () => observer.disconnect()
+  }, [fabricId, hasSwatch, shouldLoadSwatch])
+
+  return (
+    <span
+      ref={swatchRef}
+      style={{
+        backgroundColor: fabric.color,
+        ...(hasSwatch && shouldLoadSwatch
+          ? {
+              backgroundImage: `linear-gradient(rgba(255,255,255,0.12), rgba(255,255,255,0.12)), url(${assetUrl(
+                fabric.swatch,
+              )})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundBlendMode: 'multiply',
+            }
+          : {}),
+      }}
+    />
+  )
 }
 
 const loadSwatchTexture = async (swatchPath) => {
@@ -2018,6 +2094,14 @@ function App() {
     }
   }, [currentUser?.email, currentUser?.provider])
 
+  useEffect(() => {
+    if (!selectedFabric?.swatch) return
+
+    loadSwatchTexture(selectedFabric.swatch).catch(() => {
+      // Keep interaction fluid even if swatch prefetch fails.
+    })
+  }, [selectedFabric?.swatch])
+
   const filteredFurniture = useMemo(
     () =>
       FURNITURE.filter((item) => {
@@ -3102,20 +3186,9 @@ function App() {
                           setRenderStatus('')
                         }}
                       >
-                        <span
-                          style={{
-                            backgroundColor: fabric.color,
-                            ...(fabric.swatch
-                              ? {
-                                  backgroundImage: `linear-gradient(rgba(255,255,255,0.12), rgba(255,255,255,0.12)), url(${assetUrl(
-                                    fabric.swatch,
-                                  )})`,
-                                  backgroundSize: 'cover',
-                                  backgroundPosition: 'center',
-                                  backgroundBlendMode: 'multiply',
-                                }
-                              : {}),
-                          }}
+                        <LazyFabricSwatch
+                          fabric={fabric}
+                          isSelected={selectedFabric?.id === fabric.id}
                         />
                         <strong>{fabric.name}</strong>
                         <small>
