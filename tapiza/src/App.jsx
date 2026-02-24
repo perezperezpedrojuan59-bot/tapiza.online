@@ -12,6 +12,10 @@ import {
   AZNAR_JACQUARD_FABRIC_COUNT,
   AZNAR_JACQUARD_FABRICS,
 } from '../shared/aznarJacquardFabrics.js'
+import {
+  AZNAR_OUTDOOR_FABRIC_COUNT,
+  AZNAR_OUTDOOR_FABRICS,
+} from '../shared/aznarOutdoorFabrics.js'
 import { STRIPE_PAYMENT_LINKS } from '../shared/stripePaymentLinks.js'
 import './App.css'
 
@@ -1413,6 +1417,14 @@ const FABRICS = [
       collection: fabric.collection || 'Jacquard',
       fabricType: 'Jacquard',
       pattern: fabric.pattern || 'Geometricos',
+    }),
+  ),
+  ...AZNAR_OUTDOOR_FABRICS.map((fabric) =>
+    enrichFabric(fabric, {
+      manufacturer: 'Aznar Textil',
+      collection: fabric.collection || 'Outdoor',
+      fabricType: 'Outdoor',
+      pattern: fabric.pattern || 'Liso',
     }),
   ),
   ...BASE_FABRICS.map((fabric) => enrichFabric(fabric)),
@@ -2995,7 +3007,7 @@ function App() {
                   <p className="fabric-source-note">
                     Froca ACANTO ({FROCA_FABRIC_COUNTS.acanto}) + BALENCIAGA (
                     {FROCA_FABRIC_COUNTS.balenciaga}) + Aznar Jacquard ({AZNAR_JACQUARD_FABRIC_COUNT})
-                    ya integradas.
+                    + Aznar Outdoor ({AZNAR_OUTDOOR_FABRIC_COUNT}) ya integradas.
                   </p>
 
                   <div className="fabric-select-grid">
