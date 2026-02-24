@@ -8,6 +8,10 @@ import {
   isPlanUnlimited,
 } from '../shared/plans.js'
 import { FROCA_FABRICS, FROCA_FABRIC_COUNTS } from '../shared/frocaFabrics.js'
+import {
+  AZNAR_JACQUARD_FABRIC_COUNT,
+  AZNAR_JACQUARD_FABRICS,
+} from '../shared/aznarJacquardFabrics.js'
 import { STRIPE_PAYMENT_LINKS } from '../shared/stripePaymentLinks.js'
 import './App.css'
 
@@ -1401,6 +1405,14 @@ const FABRICS = [
           : 'Froca',
       fabricType: fabric.family === 'Froca Balenciaga' ? 'Jacquard' : 'Chenilla',
       pattern: 'Liso',
+    }),
+  ),
+  ...AZNAR_JACQUARD_FABRICS.map((fabric) =>
+    enrichFabric(fabric, {
+      manufacturer: 'Aznar Textil',
+      collection: fabric.collection || 'Jacquard',
+      fabricType: 'Jacquard',
+      pattern: fabric.pattern || 'Geometricos',
     }),
   ),
   ...BASE_FABRICS.map((fabric) => enrichFabric(fabric)),
@@ -2961,7 +2973,8 @@ function App() {
 
                   <p className="fabric-source-note">
                     Froca ACANTO ({FROCA_FABRIC_COUNTS.acanto}) + BALENCIAGA (
-                    {FROCA_FABRIC_COUNTS.balenciaga}) ya integradas.
+                    {FROCA_FABRIC_COUNTS.balenciaga}) + Aznar Jacquard ({AZNAR_JACQUARD_FABRIC_COUNT})
+                    ya integradas.
                   </p>
 
                   <div className="fabric-select-grid">
