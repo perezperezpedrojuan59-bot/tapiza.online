@@ -2073,8 +2073,18 @@ function App() {
     ]
   }, [])
 
+  const hasActiveFabricFilters =
+    selectedManufacturer !== 'Todos los fabricantes' ||
+    selectedCollection !== ALL_COLLECTIONS_OPTION ||
+    selectedFabricType !== 'Todos los tipos' ||
+    selectedColorFamily !== 'Todos los colores' ||
+    selectedPattern !== 'Todos los diseños'
+
   const visibleFabrics = useMemo(
-    () =>
+    () => {
+      if (!hasActiveFabricFilters) return []
+
+      return (
       FABRICS.filter((fabric) => {
         const manufacturerMatch =
           selectedManufacturer === 'Todos los fabricantes' ||
@@ -2090,12 +2100,23 @@ function App() {
           selectedPattern === 'Todos los diseños' || fabric.pattern === selectedPattern
 
         return manufacturerMatch && collectionMatch && typeMatch && colorMatch && patternMatch
-      }),
-    [selectedManufacturer, selectedCollection, selectedFabricType, selectedColorFamily, selectedPattern],
+      })
+      )
+    },
+    [
+      hasActiveFabricFilters,
+      selectedManufacturer,
+      selectedCollection,
+      selectedFabricType,
+      selectedColorFamily,
+      selectedPattern,
+    ],
   )
-  const selectedFabricVisible = selectedFabric
-    ? visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
-    : true
+  const selectedFabricVisible = !hasActiveFabricFilters || !selectedFabric
+    ? true
+    : visibleFabrics.some((fabric) => fabric.id === selectedFabric.id)
+
+  const hasNoFabricMatches = hasActiveFabricFilters && !visibleFabrics.length
 
   const ensureUpholsteryMask = async (furnitureId) => {
     const cachedMask = upholsteryMaskByFurnitureRef.current.get(furnitureId)
@@ -3086,13 +3107,20 @@ function App() {
                     ))}
                   </div>
 
-                  {!selectedFabricVisible && selectedFabric ? (
+                  {hasActiveFabricFilters && selectedFabric && !selectedFabricVisible ? (
                     <p className="fabric-filter-warning">
                       La tela seleccionada no coincide con los filtros actuales.
                     </p>
                   ) : null}
 
-                  {!visibleFabrics.length ? (
+                  {!hasActiveFabricFilters ? (
+                    <p className="fabric-filter-warning">
+                      Usa al menos un filtro (fabricante, coleccion, tipo, color o diseño) para ver
+                      telas.
+                    </p>
+                  ) : null}
+
+                  {hasNoFabricMatches ? (
                     <p className="fabric-filter-warning">
                       No hay telas para la combinacion seleccionada. Ajusta los filtros.
                     </p>
