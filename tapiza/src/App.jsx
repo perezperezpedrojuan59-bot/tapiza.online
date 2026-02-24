@@ -2676,14 +2676,11 @@ function App() {
             <button type="button" onClick={() => jumpTo('perfil')}>
               Perfil
             </button>
-            <button type="button" onClick={() => jumpTo('catalogo')}>
-              Catalogo
-            </button>
             <button type="button" onClick={() => jumpTo('mi-diseno')}>
-              Mi Diseno
+              Tapizar
             </button>
             <button type="button" onClick={() => jumpTo('precios')}>
-              Precios
+              Planes
             </button>
           </nav>
 
@@ -2715,14 +2712,11 @@ function App() {
             <button type="button" onClick={() => jumpTo('perfil')}>
               Perfil
             </button>
-            <button type="button" onClick={() => jumpTo('catalogo')}>
-              Catalogo
-            </button>
             <button type="button" onClick={() => jumpTo('mi-diseno')}>
-              Mi Diseno
+              Tapizar
             </button>
             <button type="button" onClick={() => jumpTo('precios')}>
-              Precios
+              Planes
             </button>
             {currentUser ? (
               <button
