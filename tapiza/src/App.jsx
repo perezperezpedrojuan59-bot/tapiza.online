@@ -752,30 +752,24 @@ const LazyFabricSwatch = ({ fabric, isSelected }) => {
   const swatchRef = useRef(null)
   const hasSwatch = Boolean(fabric?.swatch)
   const fabricId = String(fabric?.id || '')
-  const isAlreadyVisible = swatchPreviewVisibilityCache.has(fabricId)
-  const [shouldLoadSwatch, setShouldLoadSwatch] = useState(
-    () => !hasSwatch || isSelected || isAlreadyVisible,
+  const canObserveSwatch = typeof window !== 'undefined' && Boolean(window.IntersectionObserver)
+  const [isObserverVisible, setIsObserverVisible] = useState(
+    () => swatchPreviewVisibilityCache.has(fabricId),
   )
+  const shouldLoadSwatch =
+    !hasSwatch ||
+    isSelected ||
+    isObserverVisible ||
+    swatchPreviewVisibilityCache.has(fabricId) ||
+    !canObserveSwatch
 
   useEffect(() => {
-    if (!hasSwatch) {
-      setShouldLoadSwatch(true)
-      return
-    }
-
-    if (isSelected || swatchPreviewVisibilityCache.has(fabricId)) {
-      swatchPreviewVisibilityCache.add(fabricId)
-      setShouldLoadSwatch(true)
-    }
+    if (!hasSwatch || !isSelected) return
+    swatchPreviewVisibilityCache.add(fabricId)
   }, [fabricId, hasSwatch, isSelected])
 
   useEffect(() => {
-    if (!hasSwatch || shouldLoadSwatch) return undefined
-    if (typeof window === 'undefined' || !window.IntersectionObserver) {
-      swatchPreviewVisibilityCache.add(fabricId)
-      setShouldLoadSwatch(true)
-      return undefined
-    }
+    if (!hasSwatch || shouldLoadSwatch || !canObserveSwatch) return undefined
 
     const swatchNode = swatchRef.current
     if (!swatchNode) return undefined
@@ -787,7 +781,7 @@ const LazyFabricSwatch = ({ fabric, isSelected }) => {
         if (!entry.isIntersecting && entry.intersectionRatio <= 0) return
 
         swatchPreviewVisibilityCache.add(fabricId)
-        setShouldLoadSwatch(true)
+        setIsObserverVisible(true)
         observer.disconnect()
       },
       {
@@ -799,7 +793,7 @@ const LazyFabricSwatch = ({ fabric, isSelected }) => {
 
     observer.observe(swatchNode)
     return () => observer.disconnect()
-  }, [fabricId, hasSwatch, shouldLoadSwatch])
+  }, [canObserveSwatch, fabricId, hasSwatch, shouldLoadSwatch])
 
   return (
     <span
