@@ -13,7 +13,7 @@ Aplicacion React + Vite inspirada en la web de referencia:
   - seleccion de tela,
   - preview de tapizado.
 - Seccion de catalogo resumen.
-- Seccion de precios con toggle mensual/anual.
+- Seccion de precios simplificada.
 - Footer corporativo.
 - Alta de usuario + login.
 - Verificacion de email (codigo).
@@ -22,13 +22,9 @@ Aplicacion React + Vite inspirada en la web de referencia:
 - Flujo de monetizacion:
   - 1 render como invitado.
   - Registro y verificacion de email.
-  - Prueba Pro de 14 dias (60 renders).
-  - Plan free mensual (5 renders/mes) o suscripcion de pago.
-  - Planes de pago:
-    - Starter: 120 renders/mes
-    - Pro: 400 renders/mes
-    - Studio: 1500 renders/mes
-    - Enterprise: renders ilimitados
+  - Plan Free mensual (5 tapizados/mes).
+  - Plan Basic (19 EUR/mes, 30 tapizados/mes, 15 muebles + 15 telas propias/mes).
+  - Compra de creditos (19 EUR = 20 creditos, sin caducidad).
 
 ## Ejecutar en local
 
@@ -76,6 +72,7 @@ Configura en `.env`:
 - `GET /api/auth/profile?email=...`
 - `POST /api/auth/consume-render`
 - `POST /api/auth/activate-plan`
+- `POST /api/auth/add-credits`
 - `GET /api/stripe/config`
 - `POST /api/stripe/checkout-session`
 - `POST /api/stripe/webhook`

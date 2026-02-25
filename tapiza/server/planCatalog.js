@@ -1,4 +1,4 @@
-import { ANNUAL_DISCOUNT_RATE, PLAN_DEFINITIONS } from '../shared/plans.js'
+import { CHECKOUT_PLAN_DEFINITIONS, PLAN_DEFINITIONS } from '../shared/plans.js'
 
 export const PLAN_CATALOG = Object.fromEntries(
   PLAN_DEFINITIONS.map((plan) => [
@@ -7,26 +7,30 @@ export const PLAN_CATALOG = Object.fromEntries(
       id: plan.id,
       name: plan.name,
       description: plan.description,
-      monthlyPriceCents: Math.round(plan.monthlyPrice * 100),
+      kind: plan.kind || 'subscription',
+      monthlyPriceCents: Math.round((plan.monthlyPrice || 0) * 100),
+      oneTimePriceCents: Math.round((plan.oneTimePrice || 0) * 100),
       monthlyRenderLimit: plan.monthlyRenderLimit,
-      free: plan.monthlyPrice <= 0,
+      creditsAmount: Number(plan.creditsAmount || 0),
+      free: (plan.monthlyPrice || 0) <= 0 && (plan.oneTimePrice || 0) <= 0,
     },
   ]),
 )
 
 export const PLAN_IDS = Object.keys(PLAN_CATALOG)
+export const CHECKOUT_PLAN_IDS = CHECKOUT_PLAN_DEFINITIONS.map((plan) => plan.id)
+export const ACTIVATABLE_PLAN_IDS = PLAN_DEFINITIONS.filter(
+  (plan) => (plan.kind || 'subscription') === 'subscription' && (plan.monthlyPrice || 0) > 0,
+).map((plan) => plan.id)
 
-export const resolveBillingCycle = (value) => (value === 'annual' ? 'annual' : 'monthly')
+export const resolveBillingCycle = (_value) => 'monthly'
 
-export const getPriceCents = (plan, billingCycle) => {
+export const getPriceCents = (plan, _billingCycle) => {
   if (!plan || plan.free) return 0
 
-  if (billingCycle === 'annual') {
-    const annualMonthlyEuros = Math.round(
-      (plan.monthlyPriceCents / 100) * (1 - ANNUAL_DISCOUNT_RATE),
-    )
-    return annualMonthlyEuros * 100 * 12
+  if (plan.kind === 'credits') {
+    return Number(plan.oneTimePriceCents || 0)
   }
 
-  return plan.monthlyPriceCents
+  return Number(plan.monthlyPriceCents || 0)
 }

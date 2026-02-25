@@ -8,8 +8,9 @@ import express from 'express'
 import Stripe from 'stripe'
 
 import {
+  ACTIVATABLE_PLAN_IDS,
+  CHECKOUT_PLAN_IDS,
   PLAN_CATALOG,
-  PLAN_IDS,
   getPriceCents,
   resolveBillingCycle,
 } from './planCatalog.js'
@@ -17,7 +18,6 @@ import {
   PLAN_MAP,
   SUBSCRIPTION_POLICY,
   getPlanRenderLimit,
-  isPlanUnlimited,
 } from '../shared/plans.js'
 
 dotenv.config()
@@ -52,18 +52,12 @@ const normalizeEmail = (value) => String(value || '').trim().toLowerCase()
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value))
 const authExposeCodes = process.env.AUTH_EXPOSE_CODES !== 'false'
 
-const TRIAL_DURATION_DAYS = SUBSCRIPTION_POLICY.trialDurationDays
-const TRIAL_RENDER_LIMIT = SUBSCRIPTION_POLICY.trialRenderLimit
 const FREE_MONTHLY_RENDER_LIMIT = SUBSCRIPTION_POLICY.freeMonthlyRenderLimit
+const DEFAULT_CREDIT_PACK_SIZE = SUBSCRIPTION_POLICY.creditPackSize
 const VERIFICATION_CODE_EXPIRY_HOURS = SUBSCRIPTION_POLICY.emailVerificationCodeExpiryHours
 const PASSWORD_RESET_EXPIRY_MINUTES = SUBSCRIPTION_POLICY.passwordRecoveryCodeExpiryMinutes
 
 const monthPeriod = () => new Date().toISOString().slice(0, 7)
-const futureIsoByDays = (days) => {
-  const date = new Date()
-  date.setDate(date.getDate() + Number(days || 0))
-  return date.toISOString()
-}
 const futureIsoByHours = (hours) => {
   const date = new Date()
   date.setHours(date.getHours() + Number(hours || 0))
@@ -82,7 +76,9 @@ const finitePlanMonthlyLimit = (planId) => {
 }
 
 const normalizeUserRecord = (user) => {
-  const normalizedPlanId = user.planId || 'free'
+  const requestedPlanId = String(user.planId || 'free').trim()
+  const normalizedPlanId =
+    PLAN_MAP[requestedPlanId]?.kind === 'subscription' ? requestedPlanId : 'free'
   const monthlyLimitByPlan = finitePlanMonthlyLimit(normalizedPlanId)
   const normalized = {
     ...user,
@@ -96,15 +92,15 @@ const normalizeUserRecord = (user) => {
     resetCode: String(user.resetCode || ''),
     resetExpiresAt: user.resetExpiresAt || null,
     planId: normalizedPlanId,
-    trialStartedAt: user.trialStartedAt || null,
-    trialEndsAt: user.trialEndsAt || null,
-    trialRendersLimit: Number(user.trialRendersLimit || TRIAL_RENDER_LIMIT),
-    trialRendersUsed: Number(user.trialRendersUsed || 0),
     freeMonthlyRendersLimit: Number(
       monthlyLimitByPlan ?? user.freeMonthlyRendersLimit ?? FREE_MONTHLY_RENDER_LIMIT,
     ),
     freeMonthlyRendersUsed: Number(user.freeMonthlyRendersUsed || 0),
     freeMonthlyPeriod: user.freeMonthlyPeriod || monthPeriod(),
+    creditBalance: Math.max(0, Number(user.creditBalance || 0)),
+    processedCreditPurchaseIds: Array.isArray(user.processedCreditPurchaseIds)
+      ? user.processedCreditPurchaseIds.map((entry) => String(entry)).filter(Boolean).slice(-200)
+      : [],
   }
 
   const period = monthPeriod()
@@ -123,24 +119,7 @@ const normalizeUserRecord = (user) => {
   return normalized
 }
 
-const activateTrialIfEligible = (user) => {
-  const normalized = normalizeUserRecord(user)
-  if (!normalized.emailVerified) {
-    return normalized
-  }
-
-  if (!normalized.trialStartedAt) {
-    normalized.trialStartedAt = new Date().toISOString()
-    normalized.trialEndsAt = futureIsoByDays(TRIAL_DURATION_DAYS)
-    normalized.trialRendersLimit = TRIAL_RENDER_LIMIT
-    normalized.trialRendersUsed = 0
-  }
-
-  return normalized
-}
-
-const isTrialActive = (user) =>
-  Boolean(user?.trialEndsAt) && new Date(user.trialEndsAt).getTime() > Date.now()
+const prepareActiveUser = (user) => normalizeUserRecord(user)
 
 const quotaSnapshot = (user) => {
   const normalized = normalizeUserRecord(user)
@@ -148,89 +127,89 @@ const quotaSnapshot = (user) => {
     return {
       state: 'verify',
       blocked: true,
-      message: 'Verifica tu email para activar la prueba gratis.',
-    }
-  }
-  if (normalized.planId !== 'free') {
-    const planName = getPlanName(normalized.planId)
-    if (isPlanUnlimited(normalized.planId)) {
-      return {
-        state: 'paid_unlimited',
-        blocked: false,
-        message: `Plan ${planName} activo. Renders ilimitados.`,
-      }
-    }
-
-    const planMonthlyLimit = Number(
-      normalized.freeMonthlyRendersLimit || finitePlanMonthlyLimit(normalized.planId) || 0,
-    )
-    const remainingPaid = Math.max(0, planMonthlyLimit - Number(normalized.freeMonthlyRendersUsed || 0))
-    return {
-      state: 'paid_limited',
-      blocked: remainingPaid <= 0,
-      remaining: remainingPaid,
-      limit: planMonthlyLimit,
-      used: normalized.freeMonthlyRendersUsed,
-      period: normalized.freeMonthlyPeriod,
-      message:
-        remainingPaid > 0
-          ? `Plan ${planName}: te quedan ${remainingPaid} renders este mes.`
-          : `Has alcanzado el limite mensual de tu plan ${planName}.`,
-    }
-  }
-  if (isTrialActive(normalized)) {
-    const remaining = Math.max(
-      0,
-      Number(normalized.trialRendersLimit || TRIAL_RENDER_LIMIT) -
-        Number(normalized.trialRendersUsed || 0),
-    )
-    return {
-      state: 'trial',
-      blocked: remaining <= 0,
-      remaining,
-      limit: normalized.trialRendersLimit,
-      used: normalized.trialRendersUsed,
-      trialEndsAt: normalized.trialEndsAt,
-      message:
-        remaining > 0
-          ? `Prueba Pro activa. Te quedan ${remaining} renders.`
-          : 'Has agotado la cuota de prueba.',
+      message: 'Verifica tu email para activar tus cupos y creditos.',
     }
   }
 
-  const remaining = Math.max(
-    0,
-    Number(normalized.freeMonthlyRendersLimit || FREE_MONTHLY_RENDER_LIMIT) -
-      Number(normalized.freeMonthlyRendersUsed || 0),
+  const planMonthlyLimit = Number(
+    normalized.freeMonthlyRendersLimit || finitePlanMonthlyLimit(normalized.planId) || 0,
   )
+  const remainingMonthly = Math.max(
+    0,
+    planMonthlyLimit - Number(normalized.freeMonthlyRendersUsed || 0),
+  )
+  const creditBalance = Math.max(0, Number(normalized.creditBalance || 0))
+  const remaining = remainingMonthly + creditBalance
+  const planName = getPlanName(normalized.planId)
+
+  let message = ''
+  if (remainingMonthly > 0 && creditBalance > 0) {
+    message = `Plan ${planName}: te quedan ${remainingMonthly} tapizados este mes y ${creditBalance} creditos en saldo.`
+  } else if (remainingMonthly > 0) {
+    message =
+      normalized.planId === 'free'
+        ? `Plan gratis: te quedan ${remainingMonthly} tapizados este mes.`
+        : `Plan ${planName}: te quedan ${remainingMonthly} tapizados este mes.`
+  } else if (creditBalance > 0) {
+    message = `Has agotado el cupo mensual. Te quedan ${creditBalance} creditos para seguir tapizando.`
+  } else {
+    message =
+      normalized.planId === 'free'
+        ? 'Has alcanzado el limite mensual del plan gratis. Compra creditos o pasa a Basic.'
+        : `Has alcanzado el limite mensual de tu plan ${planName}. Compra creditos para continuar.`
+  }
+
   return {
-    state: 'free',
+    state: normalized.planId === 'free' ? 'free' : 'paid_limited',
     blocked: remaining <= 0,
     remaining,
-    limit: normalized.freeMonthlyRendersLimit,
+    monthlyRemaining: remainingMonthly,
+    creditBalance,
+    limit: planMonthlyLimit,
     used: normalized.freeMonthlyRendersUsed,
     period: normalized.freeMonthlyPeriod,
-    message:
-      remaining > 0
-        ? `Plan gratis: te quedan ${remaining} renders este mes.`
-        : 'Has alcanzado el limite del plan gratis este mes.',
+    message,
   }
 }
 
 const consumeUserRender = (user) => {
-  let normalized = activateTrialIfEligible(user)
+  let normalized = prepareActiveUser(user)
   normalized = normalizeUserRecord(normalized)
   const before = quotaSnapshot(normalized)
   if (before.blocked) {
     return { allowed: false, user: normalized, quota: before, message: before.message }
   }
-  if (before.state === 'trial') {
-    normalized.trialRendersUsed = Number(normalized.trialRendersUsed || 0) + 1
-  } else if (before.state === 'free' || before.state === 'paid_limited') {
+
+  if (before.monthlyRemaining > 0) {
     normalized.freeMonthlyRendersUsed = Number(normalized.freeMonthlyRendersUsed || 0) + 1
+  } else {
+    normalized.creditBalance = Math.max(0, Number(normalized.creditBalance || 0) - 1)
   }
+
   const after = quotaSnapshot(normalized)
   return { allowed: true, user: normalized, quota: after, message: after.message }
+}
+
+const addUserCredits = (user, creditsToAdd, purchaseId = '') => {
+  const normalized = normalizeUserRecord(user)
+  const normalizedPurchaseId = String(purchaseId || '').trim()
+  if (
+    normalizedPurchaseId &&
+    Array.isArray(normalized.processedCreditPurchaseIds) &&
+    normalized.processedCreditPurchaseIds.includes(normalizedPurchaseId)
+  ) {
+    return { user: normalized, added: false }
+  }
+
+  const safeCredits = Math.max(0, Number.parseInt(creditsToAdd, 10) || 0)
+  normalized.creditBalance = Math.max(0, Number(normalized.creditBalance || 0) + safeCredits)
+  if (normalizedPurchaseId) {
+    normalized.processedCreditPurchaseIds = [
+      ...normalized.processedCreditPurchaseIds,
+      normalizedPurchaseId,
+    ].slice(-200)
+  }
+  return { user: normalizeUserRecord(normalized), added: safeCredits > 0 }
 }
 
 const sanitizeUser = (user) => {
@@ -242,13 +221,10 @@ const sanitizeUser = (user) => {
     createdAt: normalized.createdAt,
     emailVerified: normalized.emailVerified,
     planId: normalized.planId,
-    trialStartedAt: normalized.trialStartedAt,
-    trialEndsAt: normalized.trialEndsAt,
-    trialRendersLimit: normalized.trialRendersLimit,
-    trialRendersUsed: normalized.trialRendersUsed,
     freeMonthlyRendersLimit: normalized.freeMonthlyRendersLimit,
     freeMonthlyRendersUsed: normalized.freeMonthlyRendersUsed,
     freeMonthlyPeriod: normalized.freeMonthlyPeriod,
+    creditBalance: normalized.creditBalance,
   }
 }
 
@@ -335,20 +311,39 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
             checkoutSession.customer_details?.email || checkoutSession.customer_email,
           )
           const planId = String(checkoutSession.metadata?.planId || '').trim()
-          if (isValidEmail(customerEmail) && PLAN_IDS.includes(planId) && planId !== 'free') {
+          const productKind = String(checkoutSession.metadata?.productKind || '').trim()
+          const selectedPlan = PLAN_CATALOG[planId]
+          if (isValidEmail(customerEmail) && selectedPlan) {
             await withUsersLock(async () => {
               const users = await readUsers()
               const index = users.findIndex((entry) => entry.email === customerEmail)
               if (index < 0) return
-              const user = activateTrialIfEligible(users[index])
-              user.planId = planId
-              user.freeMonthlyPeriod = monthPeriod()
-              user.freeMonthlyRendersUsed = 0
-              const planLimit = finitePlanMonthlyLimit(planId)
-              if (planLimit !== null) {
-                user.freeMonthlyRendersLimit = planLimit
+
+              if (productKind === 'credits' || selectedPlan.kind === 'credits') {
+                const creditsFromMetadata = Number.parseInt(
+                  String(checkoutSession.metadata?.creditsAmount || ''),
+                  10,
+                )
+                const creditsToAdd =
+                  creditsFromMetadata > 0 ? creditsFromMetadata : Number(selectedPlan.creditsAmount || 0)
+                const { user: userWithCredits } = addUserCredits(
+                  users[index],
+                  creditsToAdd,
+                  checkoutSession.id,
+                )
+                users[index] = userWithCredits
+              } else if (ACTIVATABLE_PLAN_IDS.includes(planId)) {
+                const user = prepareActiveUser(users[index])
+                user.planId = planId
+                user.freeMonthlyPeriod = monthPeriod()
+                user.freeMonthlyRendersUsed = 0
+                const planLimit = finitePlanMonthlyLimit(planId)
+                if (planLimit !== null) {
+                  user.freeMonthlyRendersLimit = planLimit
+                }
+                users[index] = user
               }
-              users[index] = user
+
               await writeUsers(users)
             })
           }
@@ -387,7 +382,7 @@ app.get('/api/stripe/config', (_req, res) => {
   res.json({
     publishableKey: stripePublishableKey,
     stripeConfigured: Boolean(stripe),
-    availablePlans: PLAN_IDS,
+    availablePlans: CHECKOUT_PLAN_IDS,
     currency: stripeCurrency,
   })
 })
@@ -429,13 +424,10 @@ app.post('/api/auth/register', async (req, res) => {
         resetCode: '',
         resetExpiresAt: null,
         planId: 'free',
-        trialStartedAt: null,
-        trialEndsAt: null,
-        trialRendersLimit: TRIAL_RENDER_LIMIT,
-        trialRendersUsed: 0,
         freeMonthlyRendersLimit: FREE_MONTHLY_RENDER_LIMIT,
         freeMonthlyRendersUsed: 0,
         freeMonthlyPeriod: monthPeriod(),
+        creditBalance: 0,
       }
 
       users.push(user)
@@ -453,7 +445,7 @@ app.post('/api/auth/register', async (req, res) => {
         required: true,
         ...(authExposeCodes ? { code: createdUser.verificationCode } : {}),
       },
-      message: 'Cuenta creada. Verifica tu email para activar la prueba gratis.',
+      message: 'Cuenta creada. Verifica tu email para activar tu plan.',
     })
   } catch (error) {
     console.error('[Auth register] Error:', error.message)
@@ -494,7 +486,7 @@ app.post('/api/auth/login', async (req, res) => {
         }
       }
 
-      const activatedUser = activateTrialIfEligible(normalizedUser)
+      const activatedUser = prepareActiveUser(normalizedUser)
       users[index] = activatedUser
       await writeUsers(users)
       return {
@@ -546,7 +538,7 @@ app.post('/api/auth/verify-email', async (req, res) => {
 
       const user = normalizeUserRecord(users[index])
       if (user.emailVerified) {
-        const activated = activateTrialIfEligible(user)
+        const activated = prepareActiveUser(user)
         users[index] = activated
         await writeUsers(users)
         return { type: 'already_verified', user: activated }
@@ -565,7 +557,7 @@ app.post('/api/auth/verify-email', async (req, res) => {
       user.verificationCode = ''
       user.verificationExpiresAt = null
 
-      const activated = activateTrialIfEligible(user)
+      const activated = prepareActiveUser(user)
       users[index] = activated
       await writeUsers(users)
       return { type: 'ok', user: activated }
@@ -759,7 +751,7 @@ app.get('/api/auth/profile', async (req, res) => {
         return null
       }
 
-      const user = activateTrialIfEligible(users[index])
+      const user = prepareActiveUser(users[index])
       users[index] = user
       await writeUsers(users)
       return user
@@ -811,7 +803,7 @@ app.post('/api/auth/consume-render', async (req, res) => {
     })
   } catch (error) {
     console.error('[Auth consume-render] Error:', error.message)
-    return res.status(500).json({ error: 'No se pudo procesar la cuota de renders.' })
+    return res.status(500).json({ error: 'No se pudo procesar la cuota de tapizados.' })
   }
 })
 
@@ -822,7 +814,7 @@ app.post('/api/auth/activate-plan', async (req, res) => {
   if (!isValidEmail(normalizedEmail)) {
     return res.status(400).json({ error: 'Email no valido.' })
   }
-  if (!PLAN_IDS.includes(planId) || planId === 'free') {
+  if (!ACTIVATABLE_PLAN_IDS.includes(planId)) {
     return res.status(400).json({ error: 'Plan no valido para activacion.' })
   }
 
@@ -834,7 +826,7 @@ app.post('/api/auth/activate-plan', async (req, res) => {
         return { type: 'not_found' }
       }
 
-      const user = activateTrialIfEligible(users[index])
+      const user = prepareActiveUser(users[index])
       user.planId = planId
       user.freeMonthlyPeriod = monthPeriod()
       user.freeMonthlyRendersUsed = 0
@@ -862,6 +854,53 @@ app.post('/api/auth/activate-plan', async (req, res) => {
   }
 })
 
+app.post('/api/auth/add-credits', async (req, res) => {
+  const normalizedEmail = normalizeEmail(req.body?.email)
+  const requestedCredits = Number.parseInt(String(req.body?.credits || DEFAULT_CREDIT_PACK_SIZE), 10)
+  const creditsToAdd = Number.isFinite(requestedCredits) ? requestedCredits : DEFAULT_CREDIT_PACK_SIZE
+  const purchaseId = String(req.body?.purchaseId || '').trim()
+
+  if (!isValidEmail(normalizedEmail)) {
+    return res.status(400).json({ error: 'Email no valido.' })
+  }
+  if (creditsToAdd <= 0) {
+    return res.status(400).json({ error: 'La cantidad de creditos debe ser mayor que cero.' })
+  }
+  if (creditsToAdd > 10000) {
+    return res.status(400).json({ error: 'Cantidad de creditos fuera de rango.' })
+  }
+
+  try {
+    const result = await withUsersLock(async () => {
+      const users = await readUsers()
+      const index = users.findIndex((entry) => entry.email === normalizedEmail)
+      if (index < 0) {
+        return { type: 'not_found' }
+      }
+
+      const { user: userWithCredits, added } = addUserCredits(users[index], creditsToAdd, purchaseId)
+      users[index] = userWithCredits
+      await writeUsers(users)
+      return { type: 'ok', user: userWithCredits, added }
+    })
+
+    if (result.type === 'not_found') {
+      return res.status(404).json({ error: 'Usuario no encontrado.' })
+    }
+
+    return res.json({
+      user: sanitizeUser(result.user),
+      quota: quotaSnapshot(result.user),
+      message: result.added
+        ? `${creditsToAdd} creditos agregados correctamente.`
+        : 'Los creditos de esta compra ya estaban aplicados.',
+    })
+  } catch (error) {
+    console.error('[Auth add-credits] Error:', error.message)
+    return res.status(500).json({ error: 'No se pudieron agregar los creditos.' })
+  }
+})
+
 app.post('/api/stripe/checkout-session', async (req, res) => {
   if (!stripe) {
     return res.status(503).json({
@@ -874,40 +913,54 @@ app.post('/api/stripe/checkout-session', async (req, res) => {
     const { planId, billingCycle, origin, customerEmail, clientReferenceId } = req.body || {}
     const plan = PLAN_CATALOG[planId]
 
-    if (!plan || plan.free) {
+    if (!plan || !CHECKOUT_PLAN_IDS.includes(plan.id) || plan.free) {
       return res.status(400).json({ error: 'Plan no valido para checkout.' })
     }
 
     const cycle = resolveBillingCycle(billingCycle)
     const appOrigin = normalizeOrigin(origin) || defaultAppBaseUrl
     const unitAmount = getPriceCents(plan, cycle)
-    const interval = cycle === 'annual' ? 'year' : 'month'
-    const intervalLabel = cycle === 'annual' ? 'Anual' : 'Mensual'
+    const isCreditPack = plan.kind === 'credits'
+
+    const lineItem = isCreditPack
+      ? {
+          quantity: 1,
+          price_data: {
+            currency: stripeCurrency,
+            unit_amount: unitAmount,
+            product_data: {
+              name: `Tapiza.online ${plan.name}`,
+              description:
+                plan.description || `Pack de ${Number(plan.creditsAmount || 0)} creditos para Tapiza.online`,
+            },
+          },
+        }
+      : {
+          quantity: 1,
+          price_data: {
+            currency: stripeCurrency,
+            recurring: { interval: 'month' },
+            unit_amount: unitAmount,
+            product_data: {
+              name: `Tapiza.online ${plan.name} (Mensual)`,
+              description: plan.description,
+            },
+          },
+        }
 
     const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
+      mode: isCreditPack ? 'payment' : 'subscription',
       allow_promotion_codes: true,
       success_url: `${appOrigin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appOrigin}/?checkout=cancelled`,
       customer_email: customerEmail || undefined,
       client_reference_id: clientReferenceId || undefined,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: stripeCurrency,
-            recurring: { interval },
-            unit_amount: unitAmount,
-            product_data: {
-              name: `Tapiza.online ${plan.name} (${intervalLabel})`,
-              description: plan.description,
-            },
-          },
-        },
-      ],
+      line_items: [lineItem],
       metadata: {
         planId: plan.id,
         billingCycle: cycle,
+        productKind: isCreditPack ? 'credits' : 'subscription',
+        creditsAmount: isCreditPack ? String(Number(plan.creditsAmount || 0)) : '',
       },
     })
 
