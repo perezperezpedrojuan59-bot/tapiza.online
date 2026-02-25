@@ -99,4 +99,4 @@ export const getPlanMonthlyUploadActionsLimit = (planId) => {
   return Number(plan.monthlyFurnitureUploadActionsLimit || 0)
 }
 
-export const isPlanUnlimited = (_planId) => false
+export const isPlanUnlimited = () => false

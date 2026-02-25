@@ -23,9 +23,9 @@ export const ACTIVATABLE_PLAN_IDS = PLAN_DEFINITIONS.filter(
   (plan) => (plan.kind || 'subscription') === 'subscription' && (plan.monthlyPrice || 0) > 0,
 ).map((plan) => plan.id)
 
-export const resolveBillingCycle = (_value) => 'monthly'
+export const resolveBillingCycle = () => 'monthly'
 
-export const getPriceCents = (plan, _billingCycle) => {
+export const getPriceCents = (plan) => {
   if (!plan || plan.free) return 0
 
   if (plan.kind === 'credits') {
