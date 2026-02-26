@@ -835,10 +835,15 @@ const PRELOADED_EXAMPLE_UPHOLSTERY_ZONES = {
   ],
   'cabecero-simple': [{ type: 'roundedRect', x: 0.08, y: 0.17, width: 0.84, height: 0.39, radius: 0.08 }],
   'chaise-longue': [
-    { type: 'roundedRect', x: 0.06, y: 0.64, width: 0.66, height: 0.21, radius: 0.15 },
-    { type: 'roundedRect', x: 0.1, y: 0.58, width: 0.56, height: 0.11, radius: 0.15 },
-    { type: 'ellipse', cx: 0.16, cy: 0.69, rx: 0.07, ry: 0.06 },
-    { type: 'ellipse', cx: 0.37, cy: 0.69, rx: 0.08, ry: 0.05 },
+    { type: 'roundedRect', x: 0.11, y: 0.15, width: 0.77, height: 0.3, radius: 0.08 },
+    { type: 'roundedRect', x: 0.05, y: 0.43, width: 0.89, height: 0.22, radius: 0.13 },
+    { type: 'roundedRect', x: 0.05, y: 0.52, width: 0.88, height: 0.2, radius: 0.12 },
+    { type: 'roundedRect', x: 0.05, y: 0.26, width: 0.08, height: 0.39, radius: 0.09 },
+    { type: 'roundedRect', x: 0.87, y: 0.22, width: 0.09, height: 0.47, radius: 0.09 },
+  ],
+  'puff-redondo': [
+    { type: 'roundedRect', x: 0.14, y: 0.13, width: 0.72, height: 0.19, radius: 0.22 },
+    { type: 'roundedRect', x: 0.12, y: 0.2, width: 0.76, height: 0.54, radius: 0.12 },
   ],
   'cojin-cuadrado': [{ type: 'roundedRect', x: 0.06, y: 0.07, width: 0.88, height: 0.88, radius: 0.11 }],
 }
@@ -1212,12 +1217,21 @@ const FURNITURE = [
   },
   {
     id: 'chaise-longue',
-    name: 'Sillon Moderno',
-    category: 'Sillones',
+    name: 'Chaise Longue Moderna',
+    category: 'Sofas',
     style: 'Moderno',
     shape: 'Recto/Moderno',
-    type: 'Sillon',
+    type: 'Sofa',
     image: '/images/furniture/chaise-longue.png',
+  },
+  {
+    id: 'puff-redondo',
+    name: 'Puff Tapizado Cuadrado',
+    category: 'Puffs',
+    style: 'Moderno',
+    shape: 'Curvo/Redondeado',
+    type: 'Puff',
+    image: '/images/furniture/puff-redondo.png',
   },
   {
     id: 'cojin-cuadrado',
@@ -1234,6 +1248,7 @@ const CATEGORIES = [
   'Todos',
   'Sofas',
   'Sillones',
+  'Puffs',
   'Cabeceros',
   'Cojines',
 ]
