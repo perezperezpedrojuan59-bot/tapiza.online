@@ -845,6 +845,12 @@ const PRELOADED_EXAMPLE_UPHOLSTERY_ZONES = {
     { type: 'roundedRect', x: 0.14, y: 0.13, width: 0.72, height: 0.19, radius: 0.22 },
     { type: 'roundedRect', x: 0.12, y: 0.2, width: 0.76, height: 0.54, radius: 0.12 },
   ],
+  'silla-normal': [
+    { type: 'roundedRect', x: 0.31, y: 0.12, width: 0.38, height: 0.43, radius: 0.14 },
+    { type: 'roundedRect', x: 0.28, y: 0.46, width: 0.44, height: 0.16, radius: 0.18 },
+    { type: 'roundedRect', x: 0.27, y: 0.33, width: 0.08, height: 0.24, radius: 0.11 },
+    { type: 'roundedRect', x: 0.65, y: 0.33, width: 0.08, height: 0.24, radius: 0.11 },
+  ],
   'cojin-cuadrado': [{ type: 'roundedRect', x: 0.06, y: 0.07, width: 0.88, height: 0.88, radius: 0.11 }],
 }
 
@@ -1234,6 +1240,15 @@ const FURNITURE = [
     image: '/images/furniture/puff-redondo.png',
   },
   {
+    id: 'silla-normal',
+    name: 'Silla Tapizada Moderna',
+    category: 'Sillas',
+    style: 'Moderno',
+    shape: 'Curvo/Redondeado',
+    type: 'Silla',
+    image: '/images/furniture/silla-normal.png',
+  },
+  {
     id: 'cojin-cuadrado',
     name: 'Cojin Cuadrado',
     category: 'Cojines',
@@ -1248,6 +1263,7 @@ const CATEGORIES = [
   'Todos',
   'Sofas',
   'Sillones',
+  'Sillas',
   'Puffs',
   'Cabeceros',
   'Cojines',
