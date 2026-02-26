@@ -58,6 +58,7 @@ export type Database = {
           logo_url?: string | null;
           updated_at?: string;
         };
+        Relationships: [];
       };
       jobs: {
         Row: {
@@ -96,6 +97,15 @@ export type Database = {
           start_date?: string | null;
           urgent?: boolean;
         };
+        Relationships: [
+          {
+            foreignKeyName: "jobs_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       applications: {
         Row: {
@@ -115,6 +125,22 @@ export type Database = {
         Update: {
           status?: ApplicationStatus;
         };
+        Relationships: [
+          {
+            foreignKeyName: "applications_job_id_fkey";
+            columns: ["job_id"];
+            isOneToOne: false;
+            referencedRelation: "jobs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "applications_worker_id_fkey";
+            columns: ["worker_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       chats: {
         Row: {
@@ -134,6 +160,36 @@ export type Database = {
           created_at?: string;
         };
         Update: Record<string, never>;
+        Relationships: [
+          {
+            foreignKeyName: "chats_application_id_fkey";
+            columns: ["application_id"];
+            isOneToOne: true;
+            referencedRelation: "applications";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chats_company_id_fkey";
+            columns: ["company_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chats_job_id_fkey";
+            columns: ["job_id"];
+            isOneToOne: false;
+            referencedRelation: "jobs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chats_worker_id_fkey";
+            columns: ["worker_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          }
+        ];
       };
       messages: {
         Row: {
@@ -153,6 +209,22 @@ export type Database = {
         Update: {
           text?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "messages_chat_id_fkey";
+            columns: ["chat_id"];
+            isOneToOne: false;
+            referencedRelation: "chats";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "messages_sender_id_fkey";
+            columns: ["sender_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          }
+        ];
       };
     };
     Views: Record<string, never>;

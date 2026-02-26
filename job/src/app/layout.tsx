@@ -14,6 +14,8 @@ export const metadata: Metadata = {
   description: "Empleo rapido para trabajadores operativos"
 };
 
+export const dynamic = "force-dynamic";
+
 export default async function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {

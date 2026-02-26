@@ -16,7 +16,7 @@ type WorkerApplication = {
   id: string;
   status: "applied" | "shortlisted" | "rejected" | "hired";
   job: { id: string; title: string; city: string; category: string } | null;
-  chats: { id: string }[] | null;
+  chats: { id: string }[];
 };
 
 type CompanyJob = {
@@ -26,6 +26,13 @@ type CompanyJob = {
   category: string;
   urgent: boolean;
   applications: { id: string }[] | null;
+};
+
+type WorkerApplicationRaw = {
+  id: string;
+  status: "applied" | "shortlisted" | "rejected" | "hired";
+  job: { id: string; title: string; city: string; category: string }[] | null;
+  chats: { id: string }[] | null;
 };
 
 type PanelPageProps = {
@@ -48,7 +55,14 @@ export default async function PanelPage({ searchParams }: PanelPageProps) {
       .eq("worker_id", session.user.id)
       .order("created_at", { ascending: false });
 
-    const applications = (data ?? []) as WorkerApplication[];
+    const applications = (((data ?? []) as unknown as WorkerApplicationRaw[]) ?? []).map(
+      (item) => ({
+        id: item.id,
+        status: item.status,
+        job: item.job?.[0] ?? null,
+        chats: item.chats ?? []
+      })
+    );
 
     return (
       <section className="space-y-4">

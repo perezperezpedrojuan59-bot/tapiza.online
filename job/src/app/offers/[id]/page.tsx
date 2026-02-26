@@ -20,13 +20,26 @@ type CandidateRow = {
   id: string;
   status: "applied" | "shortlisted" | "rejected" | "hired";
   worker_id: string;
-  chats: { id: string }[] | null;
+  chats: { id: string }[];
   worker: {
     id: string;
     name: string;
     city: string;
     categories: string[] | null;
   } | null;
+};
+
+type CandidateRaw = {
+  id: string;
+  status: "applied" | "shortlisted" | "rejected" | "hired";
+  worker_id: string;
+  chats: { id: string }[] | null;
+  worker: {
+    id: string;
+    name: string;
+    city: string;
+    categories: string[] | null;
+  }[] | null;
 };
 
 export default async function OfferDetailPage({
@@ -73,7 +86,14 @@ export default async function OfferDetailPage({
       )
       .eq("job_id", job.id)
       .order("created_at", { ascending: false });
-    candidates = (data ?? []) as CandidateRow[];
+    const raw = ((data ?? []) as unknown as CandidateRaw[]) ?? [];
+    candidates = raw.map((item) => ({
+      id: item.id,
+      status: item.status,
+      worker_id: item.worker_id,
+      chats: item.chats ?? [],
+      worker: item.worker?.[0] ?? null
+    }));
   }
 
   return (
