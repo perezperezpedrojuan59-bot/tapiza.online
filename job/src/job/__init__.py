@@ -1,3 +1,3 @@
-"""Base package for job."""
+"""Core package for tapiza.online MVP."""
 
-__all__ = ["main"]
+__all__ = ["main", "quote"]
